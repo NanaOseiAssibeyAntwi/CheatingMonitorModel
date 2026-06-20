@@ -1,0 +1,1 @@
+"""Cheating detector package."""

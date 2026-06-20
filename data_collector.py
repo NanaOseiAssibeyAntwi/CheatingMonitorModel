@@ -1,0 +1,1 @@
+from cheating_detector.core.data_collector import DataCollector

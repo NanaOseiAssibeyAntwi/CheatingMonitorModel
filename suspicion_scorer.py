@@ -1,0 +1,1 @@
+from cheating_detector.core.suspicion_scorer import SuspicionScorer

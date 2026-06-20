@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class LandmarkPoint(BaseModel):
+    id: int
+    x: float
+    y: float
+    z: float = 0.0
+    pixel_x: int = 0
+    pixel_y: int = 0
+
+
+class FeaturePayload(BaseModel):
+    gaze_x: float
+    gaze_y: float
+    blink_rate: float
+    head_yaw: float
+    head_pitch: float
+    head_roll: float
+    ear: float | None = None
+
+
+class AnalysisRequestBase(BaseModel):
+    session_id: str | None = Field(
+        default=None,
+        description="Optional in-memory session for temporal blink-rate and rolling-score state.",
+    )
+    classifier_output: int | None = Field(default=None, ge=0, le=1)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class AnalyzeLandmarksRequest(AnalysisRequestBase):
+    face_count: int = Field(default=1, ge=0)
+    landmarks: list[LandmarkPoint] = Field(min_length=1)
+
+
+class ScoreRequest(AnalysisRequestBase):
+    face_count: int = Field(default=1, ge=0)
+    features: FeaturePayload
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+
+
+class DatasetFileItem(BaseModel):
+    name: str
+    size_bytes: int
+    modified_at: str
+
+
+class AnalysisResponse(BaseModel):
+    detected: bool
+    face_count: int
+    session_id: str | None = None
+    features: FeaturePayload | None = None
+    score: int | None = None
+    label: str
+    label_color: list[int]
+
+
+class ScoreResponse(BaseModel):
+    session_id: str | None = None
+    face_count: int
+    score: int
+    label: str
+    label_color: list[int]
+    features: FeaturePayload
+
+
+class VideoFrameResult(BaseModel):
+    frame_index: int
+    timestamp_seconds: float
+    detected: bool
+    face_count: int
+    score: int | None = None
+    label: str
+    label_color: list[int]
+    observations: list[str]
+    features: FeaturePayload | None = None
+    landmarks: list[LandmarkPoint] | None = None
+
+
+class VideoEvent(BaseModel):
+    start_timestamp_seconds: float
+    end_timestamp_seconds: float
+    start_frame_index: int
+    end_frame_index: int
+    label: str
+    reason: str
+    max_score: int | None = None
+    frame_count: int
+
+
+class VideoAnalysisResponse(BaseModel):
+    session_id: str | None = None
+    filename: str
+    frames_processed: int
+    frames_sampled: int
+    fps: float
+    duration_seconds: float
+    detections: int
+    max_score: int
+    average_score: float
+    final_label: str
+    suspicious_event_count: int
+    events: list[VideoEvent]
+    frame_results: list[VideoFrameResult]
+
+
+class VideoSummaryKeyFrame(BaseModel):
+    frame_index: int
+    timestamp_seconds: float
+    label: str
+    score: int | None = None
+    observations: list[str]
+
+
+class VideoSummaryResponse(BaseModel):
+    session_id: str | None = None
+    filename: str
+    frames_processed: int
+    frames_sampled: int
+    fps: float
+    duration_seconds: float
+    detections: int
+    max_score: int
+    average_score: float
+    final_label: str
+    suspicious_event_count: int
+    events: list[VideoEvent]
+    key_frames: list[VideoSummaryKeyFrame]

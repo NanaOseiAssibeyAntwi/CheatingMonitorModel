@@ -1,0 +1,9 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# JavaScript / React Native dependencies and local caches
+node_modules/
+staging/myApp/node_modules/
+staging/myApp/.expo/

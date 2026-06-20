@@ -1,0 +1,592 @@
+{
+  "info": {
+    "_postman_id": "efef2c2d-6f5a-49d2-9737-5d11f3b90f4d",
+    "name": "CheatingDetector API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection for testing the CheatingDetector FastAPI service locally or after deployment."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "datasetFilename",
+      "value": ""
+    },
+    {
+      "key": "videoSampleEveryNFrames",
+      "value": "10"
+    },
+    {
+      "key": "videoMaxFrames",
+      "value": "30"
+    },
+    {
+      "key": "videoIncludeLandmarks",
+      "value": "true"
+    },
+    {
+      "key": "videoSummaryMaxKeyFrames",
+      "value": "5"
+    }
+  ],
+  "item": [
+    {
+      "name": "Root",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            ""
+          ]
+        },
+        "description": "Basic API metadata."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Root includes docs link', function () {",
+              "  pm.expect(body.docs).to.eql('/docs');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Health check endpoint."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Health response is ok', function () {",
+              "  pm.expect(pm.response.json().status).to.eql('ok');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Session",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/sessions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sessions"
+          ]
+        },
+        "description": "Creates an in-memory session and stores it in the collection/environment variable `sessionId`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.expect(body.session_id).to.be.a('string').and.not.empty;",
+              "pm.collectionVariables.set('sessionId', body.session_id);",
+              "pm.environment.set('sessionId', body.session_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reset Session",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/sessions/{{sessionId}}/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sessions",
+            "{{sessionId}}",
+            "reset"
+          ]
+        },
+        "description": "Resets the active session. Run `Create Session` first."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Session reset response is true', function () {",
+              "  pm.expect(pm.response.json().reset).to.eql(true);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Score Features",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{sessionId}}\",\n  \"face_count\": 1,\n  \"features\": {\n    \"gaze_x\": 0.1,\n    \"gaze_y\": 0.0,\n    \"blink_rate\": 12.0,\n    \"head_yaw\": 3.0,\n    \"head_pitch\": 1.0,\n    \"head_roll\": 0.5,\n    \"ear\": 0.24\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/score",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "score"
+          ]
+        },
+        "description": "Scores an already-extracted feature vector."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Score response includes label', function () {",
+              "  pm.expect(body.label).to.be.oneOf(['NORMAL', 'CAUTION', 'SUSPICIOUS']);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze Landmarks",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{sessionId}}\",\n  \"face_count\": 1,\n  \"confidence\": 1.0,\n  \"landmarks\": [\n    {\"id\": 1, \"x\": 0.5, \"y\": 0.48, \"z\": 0.0, \"pixel_x\": 500, \"pixel_y\": 480},\n    {\"id\": 6, \"x\": 0.5, \"y\": 0.38, \"z\": 0.0, \"pixel_x\": 500, \"pixel_y\": 380},\n    {\"id\": 33, \"x\": 0.4, \"y\": 0.45, \"z\": 0.0, \"pixel_x\": 400, \"pixel_y\": 450},\n    {\"id\": 133, \"x\": 0.48, \"y\": 0.45, \"z\": 0.0, \"pixel_x\": 480, \"pixel_y\": 450},\n    {\"id\": 144, \"x\": 0.445, \"y\": 0.468, \"z\": 0.0, \"pixel_x\": 445, \"pixel_y\": 468},\n    {\"id\": 152, \"x\": 0.5, \"y\": 0.72, \"z\": 0.0, \"pixel_x\": 500, \"pixel_y\": 720},\n    {\"id\": 153, \"x\": 0.435, \"y\": 0.468, \"z\": 0.0, \"pixel_x\": 435, \"pixel_y\": 468},\n    {\"id\": 158, \"x\": 0.445, \"y\": 0.432, \"z\": 0.0, \"pixel_x\": 445, \"pixel_y\": 432},\n    {\"id\": 160, \"x\": 0.435, \"y\": 0.432, \"z\": 0.0, \"pixel_x\": 435, \"pixel_y\": 432},\n    {\"id\": 234, \"x\": 0.28, \"y\": 0.5, \"z\": 0.0, \"pixel_x\": 280, \"pixel_y\": 500},\n    {\"id\": 263, \"x\": 0.6, \"y\": 0.46, \"z\": 0.0, \"pixel_x\": 600, \"pixel_y\": 460},\n    {\"id\": 362, \"x\": 0.52, \"y\": 0.46, \"z\": 0.0, \"pixel_x\": 520, \"pixel_y\": 460},\n    {\"id\": 373, \"x\": 0.555, \"y\": 0.478, \"z\": 0.0, \"pixel_x\": 555, \"pixel_y\": 478},\n    {\"id\": 380, \"x\": 0.565, \"y\": 0.478, \"z\": 0.0, \"pixel_x\": 565, \"pixel_y\": 478},\n    {\"id\": 385, \"x\": 0.565, \"y\": 0.442, \"z\": 0.0, \"pixel_x\": 565, \"pixel_y\": 442},\n    {\"id\": 387, \"x\": 0.555, \"y\": 0.442, \"z\": 0.0, \"pixel_x\": 555, \"pixel_y\": 442},\n    {\"id\": 454, \"x\": 0.72, \"y\": 0.5, \"z\": 0.0, \"pixel_x\": 720, \"pixel_y\": 500},\n    {\"id\": 468, \"x\": 0.442, \"y\": 0.45, \"z\": 0.0, \"pixel_x\": 442, \"pixel_y\": 450},\n    {\"id\": 473, \"x\": 0.558, \"y\": 0.46, \"z\": 0.0, \"pixel_x\": 558, \"pixel_y\": 460}\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/analyze/landmarks",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "analyze",
+            "landmarks"
+          ]
+        },
+        "description": "Tests the landmark-based analysis path using a known-good payload."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Landmark analysis detected a face payload', function () {",
+              "  pm.expect(body.detected).to.eql(true);",
+              "  pm.expect(body.features).to.be.an('object');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze Image",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "image",
+              "type": "file",
+              "src": []
+            },
+            {
+              "key": "session_id",
+              "type": "text",
+              "value": "{{sessionId}}"
+            },
+            {
+              "key": "confidence",
+              "type": "text",
+              "value": "1.0"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/analyze/image",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "analyze",
+            "image"
+          ]
+        },
+        "description": "Choose a real image file in Postman before sending this request. Use a face photo to test real detection."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200 or 400 depending on selected file', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze Video",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "video",
+              "type": "file",
+              "src": []
+            },
+            {
+              "key": "session_id",
+              "type": "text",
+              "value": "{{sessionId}}"
+            },
+            {
+              "key": "confidence",
+              "type": "text",
+              "value": "1.0"
+            },
+            {
+              "key": "sample_every_n_frames",
+              "type": "text",
+              "value": "{{videoSampleEveryNFrames}}"
+            },
+            {
+              "key": "max_frames",
+              "type": "text",
+              "value": "{{videoMaxFrames}}"
+            },
+            {
+              "key": "include_landmarks",
+              "type": "text",
+              "value": "{{videoIncludeLandmarks}}"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/analyze/video",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "analyze",
+            "video"
+          ]
+        },
+        "description": "Choose a short video file in Postman before sending this request. The API samples frames and returns per-frame results plus a summary."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200 or 400 depending on selected file', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "  const body = pm.response.json();",
+              "  pm.test('Video analysis returns frame results', function () {",
+              "    pm.expect(body.frame_results).to.be.an('array');",
+              "  });",
+              "  pm.test('Video analysis returns timeline events', function () {",
+              "    pm.expect(body.events).to.be.an('array');",
+              "    pm.expect(body).to.have.property('suspicious_event_count');",
+              "  });",
+              "  if (body.frame_results.length > 0) {",
+              "    pm.test('Each sampled frame includes observations', function () {",
+              "      pm.expect(body.frame_results[0].observations).to.be.an('array');",
+              "    });",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze Video Summary",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "video",
+              "type": "file",
+              "src": []
+            },
+            {
+              "key": "session_id",
+              "type": "text",
+              "value": "{{sessionId}}"
+            },
+            {
+              "key": "confidence",
+              "type": "text",
+              "value": "1.0"
+            },
+            {
+              "key": "sample_every_n_frames",
+              "type": "text",
+              "value": "{{videoSampleEveryNFrames}}"
+            },
+            {
+              "key": "max_frames",
+              "type": "text",
+              "value": "{{videoMaxFrames}}"
+            },
+            {
+              "key": "max_key_frames",
+              "type": "text",
+              "value": "{{videoSummaryMaxKeyFrames}}"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/analyze/video/summary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "analyze",
+            "video",
+            "summary"
+          ]
+        },
+        "description": "Choose a short video file in Postman before sending this request. This lighter endpoint returns the event timeline and top key frames without the full per-frame landmark payload."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200 or 400 depending on selected file', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "  const body = pm.response.json();",
+              "  pm.test('Video summary returns events', function () {",
+              "    pm.expect(body.events).to.be.an('array');",
+              "    pm.expect(body.key_frames).to.be.an('array');",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List Datasets",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/datasets",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "datasets"
+          ]
+        },
+        "description": "Returns the CSV files currently available in the dataset folder."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test('Dataset list is an array', function () {",
+              "  pm.expect(body).to.be.an('array');",
+              "});",
+              "if (body.length > 0) {",
+              "  pm.collectionVariables.set('datasetFilename', body[0].name);",
+              "  pm.environment.set('datasetFilename', body[0].name);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Download Dataset",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/datasets/{{datasetFilename}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "datasets",
+            "{{datasetFilename}}"
+          ]
+        },
+        "description": "Downloads the dataset file stored in `datasetFilename`. Run `List Datasets` first."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete Session",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/sessions/{{sessionId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sessions",
+            "{{sessionId}}"
+          ]
+        },
+        "description": "Deletes the active session. Run this at the end."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.collectionVariables.unset('sessionId');",
+              "pm.environment.unset('sessionId');"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
