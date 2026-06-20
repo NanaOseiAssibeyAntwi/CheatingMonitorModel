@@ -157,8 +157,10 @@ This repo includes a `render.yaml` Blueprint config for a Python web service.
    - start command: `uvicorn cheating_detector.api.app:app --host 0.0.0.0 --port $PORT`
    - health check path: `/health`
 3. Set `ALLOWED_ORIGINS` in Render to your frontend domain(s) when moving to production.
+4. The repo includes `.python-version` pinned to `3.11.9` so dependency builds stay compatible with `numpy==1.26.4` and `mediapipe==0.10.21`.
 
 Manual service setup in Render uses the same build/start commands if you prefer not to use Blueprint.
+If you already created a manual Render web service before this file existed, set `PYTHON_VERSION=3.11.9` in that service's Environment settings and redeploy.
 
 ## Notes
 
