@@ -1,6 +1,5 @@
 import math
 import time
-from collections import deque
 
 
 class FeatureExtractor:
@@ -48,9 +47,6 @@ class FeatureExtractor:
     CALIBRATION_OUTLIER_YAW = 35.0
     CALIBRATION_OUTLIER_PITCH = 35.0
     CALIBRATION_OUTLIER_ROLL = 25.0
-    TALK_WINDOW = 24
-    MOUTH_OPEN_THRESHOLD = 0.24
-    SPEECH_ACTIVITY_THRESHOLD = 0.62
     PITCH_NEUTRAL_RATIO = 0.36
     PITCH_SCALE = 120.0
 
@@ -70,8 +66,6 @@ class FeatureExtractor:
             "head_pitch": 0.0,
             "head_roll": 0.0,
         }
-        self._mouth_mar_history = deque(maxlen=self.TALK_WINDOW)
-        self._mouth_movement_history = deque(maxlen=self.TALK_WINDOW)
         self._prev_mouth_mar = None
 
     @staticmethod
@@ -229,7 +223,7 @@ class FeatureExtractor:
     def compute_mouth_activity(self, lm):
         required = [self.UPPER_LIP, self.LOWER_LIP, self.MOUTH_LEFT, self.MOUTH_RIGHT]
         if not all(key in lm for key in required):
-            return 0.0, 0.0, 0.0, False
+            return 0.0, 0.0
 
         mouth_width = self._dist(lm[self.MOUTH_LEFT], lm[self.MOUTH_RIGHT])
         if mouth_width == 0:
@@ -244,35 +238,7 @@ class FeatureExtractor:
             mouth_movement = abs(mar - self._prev_mouth_mar)
         self._prev_mouth_mar = mar
 
-        self._mouth_mar_history.append(mar)
-        self._mouth_movement_history.append(mouth_movement)
-        history = list(self._mouth_mar_history)
-        movement_history = list(self._mouth_movement_history)
-        variability = (max(history) - min(history)) if len(history) > 1 else 0.0
-        avg_movement = (
-            sum(movement_history) / len(movement_history) if movement_history else 0.0
-        )
-        movement_peaks = sum(
-            1 for value in movement_history if value >= 0.01
-        )
-        movement_peak_ratio = (
-            movement_peaks / len(movement_history) if movement_history else 0.0
-        )
-
-        speech_activity = self._clamp(
-            (variability * 9.0)
-            + (avg_movement * 20.0)
-            + (movement_peak_ratio * 0.5),
-            0.0,
-            1.0,
-        )
-        is_speaking = (
-            speech_activity >= self.SPEECH_ACTIVITY_THRESHOLD
-            and variability >= 0.03
-            and avg_movement >= 0.0045
-            and len(history) >= 8
-        )
-        return mar, mouth_movement, speech_activity, is_speaking
+        return mar, mouth_movement
 
     @property
     def is_calibrating(self):
@@ -334,7 +300,7 @@ class FeatureExtractor:
         blink_rate = self.update_blink(avg_ear)
         gaze_x, gaze_y = self.compute_gaze(lm)
         yaw, pitch, roll = self.compute_head_pose(lm)
-        mouth_mar, mouth_movement, speech_activity, is_speaking = self.compute_mouth_activity(lm)
+        mouth_mar, mouth_movement = self.compute_mouth_activity(lm)
 
         if self.auto_calibrate:
             self._update_calibration_offsets(gaze_x, gaze_y, yaw, pitch, roll)
@@ -358,6 +324,4 @@ class FeatureExtractor:
             "ear": round(avg_ear, 4),
             "mouth_mar": round(mouth_mar, 4),
             "mouth_movement": round(mouth_movement, 4),
-            "speech_activity": round(speech_activity, 4),
-            "is_speaking": is_speaking,
         }

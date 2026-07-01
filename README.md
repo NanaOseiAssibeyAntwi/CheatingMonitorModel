@@ -143,7 +143,7 @@ Video response highlights:
 
 - `frame_results`: one entry per sampled frame
 - `frame_results[].observations`: human-readable notes tied to the specific signals detected in each frame
-- `frame_results[].signals`: machine-readable detections (head pose, gaze, speaking, no-face, low-light, etc.) for frontend rendering/logging
+- `frame_results[].signals`: machine-readable detections (head pose, gaze, no-face, low-light, etc.) for frontend rendering/logging
 - `frame_results[].sample_window_seconds`: estimated duration represented by that sampled frame
 - `frame_results[].timestamp_source`: `video_fps` or `estimated_30fps` when source FPS metadata is missing
 - `frame_results[].landmarks`: the detected landmark points for that sampled frame when `include_landmarks=true`

@@ -20,7 +20,6 @@ class SuspicionScorer:
     ROLL_THRESHOLD = 16.0
     BLINK_LOW = 5.0
     BLINK_HIGH = 30.0
-    SPEECH_ACTIVITY_THRESHOLD = 0.62
 
     def __init__(self):
         self._history = deque(maxlen=self.WINDOW_SIZE)
@@ -38,9 +37,6 @@ class SuspicionScorer:
         if head_pitch > self.PITCH_DOWN_THRESHOLD or head_pitch < -self.PITCH_UP_THRESHOLD:
             score += 0.15
         if abs(features.get("head_roll", 0.0)) > self.ROLL_THRESHOLD:
-            score += 0.10
-        speech_activity = features.get("speech_activity")
-        if speech_activity is not None and speech_activity > self.SPEECH_ACTIVITY_THRESHOLD:
             score += 0.10
         blink_rate = features.get("blink_rate", 0.0)
         if blink_rate > 0 and (blink_rate < self.BLINK_LOW or blink_rate > self.BLINK_HIGH):

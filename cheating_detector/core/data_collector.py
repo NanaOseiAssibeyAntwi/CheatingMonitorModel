@@ -13,7 +13,7 @@ class DataCollector:
     CSV columns:
         timestamp, gaze_x, gaze_y, blink_rate,
         head_yaw, head_pitch, head_roll,
-        mouth_mar, mouth_movement, speech_activity, is_speaking,
+        mouth_mar, mouth_movement,
         label
     """
 
@@ -27,8 +27,6 @@ class DataCollector:
         "head_roll",
         "mouth_mar",
         "mouth_movement",
-        "speech_activity",
-        "is_speaking",
         "label",
     ]
 
@@ -69,8 +67,6 @@ class DataCollector:
                 "head_roll": features["head_roll"],
                 "mouth_mar": features.get("mouth_mar", 0.0),
                 "mouth_movement": features.get("mouth_movement", 0.0),
-                "speech_activity": features.get("speech_activity", 0.0),
-                "is_speaking": int(bool(features.get("is_speaking", False))),
                 "label": self._current_label,
             }
             self._writer.writerow(row)

@@ -22,8 +22,6 @@ class FeaturePayload(BaseModel):
     ear: float | None = None
     mouth_mar: float | None = None
     mouth_movement: float | None = None
-    speech_activity: float | None = None
-    is_speaking: bool | None = None
 
 
 class AnalysisRequestBase(BaseModel):

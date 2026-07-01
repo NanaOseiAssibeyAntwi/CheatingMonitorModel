@@ -24,7 +24,6 @@ class AnalysisService:
     HEAD_ROLL_THRESHOLD = 14.0
     BLINK_LOW = 5.0
     BLINK_HIGH = 30.0
-    SPEECH_ACTIVITY_THRESHOLD = 0.62
     MOUTH_OPEN_THRESHOLD = 0.24
     DARK_FRAME_BRIGHTNESS = 35.0
     LOW_CONTRAST_THRESHOLD = 12.0
@@ -188,8 +187,6 @@ class AnalysisService:
         head_pitch = float(features.get("head_pitch", 0.0))
         head_roll = float(features.get("head_roll", 0.0))
         blink_rate = float(features.get("blink_rate", 0.0))
-        speech_activity = features.get("speech_activity")
-        is_speaking = bool(features.get("is_speaking", False))
         mouth_mar = features.get("mouth_mar")
 
         if abs(gaze_x) > cls.GAZE_SIDE_THRESHOLD:
@@ -291,26 +288,8 @@ class AnalysisService:
             )
 
         if (
-            speech_activity is not None
-            and is_speaking
-            and float(speech_activity) >= cls.SPEECH_ACTIVITY_THRESHOLD
-        ):
-            speech_value = float(speech_activity)
-            signals.append(
-                cls._signal(
-                    code="speaking_activity",
-                    category="mouth",
-                    severity=cls._severity(speech_value, cls.SPEECH_ACTIVITY_THRESHOLD),
-                    value=round(speech_value, 4),
-                    threshold=cls.SPEECH_ACTIVITY_THRESHOLD,
-                    message="Likely speaking or active mouth movement detected.",
-                )
-            )
-
-        if (
             mouth_mar is not None
             and float(mouth_mar) >= (cls.MOUTH_OPEN_THRESHOLD + 0.06)
-            and not is_speaking
         ):
             signals.append(
                 cls._signal(
