@@ -28,6 +28,10 @@ class AnalysisService:
     DARK_FRAME_BRIGHTNESS = 35.0
     LOW_CONTRAST_THRESHOLD = 12.0
     TIMESTAMP_FPS_FALLBACK = 30.0
+    TRANSIENT_SIGNAL_RULES: dict[str, tuple[int, float]] = {
+        "no_face": (2, 1.2),
+        "multiple_faces": (2, 1.2),
+    }
 
     def __init__(self, session_store: SessionStore | None = None):
         self.session_store = session_store or SessionStore()
@@ -399,6 +403,19 @@ class AnalysisService:
             "frame_count": 1,
         }
 
+    @classmethod
+    def _is_transient_event(cls, event: dict) -> bool:
+        signal_code = event.get("signal_code")
+        if not signal_code:
+            return False
+        rule = cls.TRANSIENT_SIGNAL_RULES.get(signal_code)
+        if not rule:
+            return False
+        min_frames, min_duration = rule
+        frame_count = int(event.get("frame_count") or 0)
+        duration_seconds = float(event.get("duration_seconds") or 0.0)
+        return frame_count < min_frames and duration_seconds < min_duration
+
     def _build_events(self, frame_results: list[dict]) -> list[dict]:
         events = []
         active_events_by_code: dict[str, dict] = {}
@@ -467,7 +484,7 @@ class AnalysisService:
                 }
 
             fallback_event = self._fallback_event_from_frame(frame, frame_start, frame_end)
-            if fallback_event:
+            if fallback_event and not frame_signals:
                 fallback_code = fallback_event["signal_code"]
                 if fallback_code not in seen_codes:
                     seen_codes.add(fallback_code)
@@ -510,7 +527,7 @@ class AnalysisService:
                 event.get("signal_code") or "",
             )
         )
-        return events
+        return [event for event in events if not self._is_transient_event(event)]
 
     def _target_alert_count(self, events: list[dict], max_alerts: int) -> int:
         if not events or max_alerts < 1:
@@ -754,6 +771,7 @@ class AnalysisService:
 
             active_session_id, extractor, scorer = self._get_processors(session_id)
             renderer = FaceMeshRenderer(static_image_mode=False, max_num_faces=2)
+            fallback_renderer = FaceMeshRenderer(static_image_mode=True, max_num_faces=2)
             frame_results = []
             frames_processed = 0
             frames_sampled = 0
@@ -802,6 +820,15 @@ class AnalysisService:
 
                     renderer.find_face(inference_frame, draw=False)
                     landmarks = renderer.find_landmarks(inference_frame, draw=False)
+                    frame_face_count = renderer.face_count
+                    if not landmarks:
+                        fallback_renderer.find_face(inference_frame, draw=False)
+                        fallback_landmarks = fallback_renderer.find_landmarks(
+                            inference_frame, draw=False
+                        )
+                        if fallback_landmarks:
+                            landmarks = fallback_landmarks
+                            frame_face_count = fallback_renderer.face_count
 
                     if landmarks:
                         features = extractor.extract(landmarks)
@@ -810,7 +837,7 @@ class AnalysisService:
                             classifier_output=classifier_output,
                             confidence=confidence,
                         )
-                        if renderer.face_count > 1:
+                        if frame_face_count > 1:
                             label = "SUSPICIOUS"
                             colour = (0, 0, 220)
                             score = max(score, 75)
@@ -825,6 +852,7 @@ class AnalysisService:
                         colour = (220, 0, 0)
                         detected = False
                         normalized_landmarks = None
+                        frame_face_count = 0
 
                     timestamp_seconds = self._resolve_timestamp_seconds(
                         capture=capture,
@@ -836,7 +864,7 @@ class AnalysisService:
 
                     signals = self._frame_signals(
                         features=features,
-                        face_count=renderer.face_count,
+                        face_count=frame_face_count,
                         detected=detected,
                         frame_brightness=frame_brightness,
                         frame_contrast=frame_contrast,
@@ -853,7 +881,7 @@ class AnalysisService:
                             ),
                             "timestamp_source": timestamp_source,
                             "detected": detected,
-                            "face_count": renderer.face_count,
+                            "face_count": frame_face_count,
                             "score": score,
                             "label": label,
                             "label_color": list(colour),
@@ -866,6 +894,7 @@ class AnalysisService:
             finally:
                 capture.release()
                 renderer.close()
+                fallback_renderer.close()
 
             if not frame_results:
                 raise ValueError("Could not read any frames from the uploaded video.")

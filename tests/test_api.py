@@ -8,6 +8,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from cheating_detector.api.app import app
+from cheating_detector.services.analyzer import AnalysisService
 
 warnings.filterwarnings(
     "ignore",
@@ -270,6 +271,68 @@ class ApiTests(unittest.TestCase):
     def test_dataset_path_traversal_is_blocked(self):
         response = self.client.get("/api/v1/datasets/../secrets.txt")
         self.assertEqual(response.status_code, 404)
+
+    def test_transient_no_face_events_are_filtered(self):
+        service = AnalysisService()
+        frame_results = [
+            {
+                "frame_index": 0,
+                "timestamp_seconds": 0.0,
+                "sample_window_seconds": 0.9,
+                "label": "NO_FACE",
+                "score": None,
+                "signals": [
+                    {
+                        "code": "no_face",
+                        "severity": "high",
+                        "message": "No face detected in this sampled frame.",
+                    }
+                ],
+            },
+            {
+                "frame_index": 30,
+                "timestamp_seconds": 1.0,
+                "sample_window_seconds": 0.9,
+                "label": "NORMAL",
+                "score": 0,
+                "signals": [],
+            },
+        ]
+        events = service._build_events(frame_results)
+        event_codes = [event["signal_code"] for event in events]
+        self.assertNotIn("no_face", event_codes)
+
+    def test_risk_score_not_created_when_specific_signal_exists(self):
+        service = AnalysisService()
+        frame_results = [
+            {
+                "frame_index": 0,
+                "timestamp_seconds": 0.0,
+                "sample_window_seconds": 1.0,
+                "label": "CAUTION",
+                "score": 45,
+                "signals": [
+                    {
+                        "code": "head_turn_left",
+                        "severity": "high",
+                        "message": "Head turned toward the left.",
+                        "value": -20.0,
+                    }
+                ],
+            },
+            {
+                "frame_index": 20,
+                "timestamp_seconds": 1.0,
+                "sample_window_seconds": 1.0,
+                "label": "NORMAL",
+                "score": 0,
+                "signals": [],
+            },
+        ]
+        events = service._build_events(frame_results)
+        event_codes = [event["signal_code"] for event in events]
+        self.assertIn("head_turn_left", event_codes)
+        self.assertNotIn("risk_score", event_codes)
 
 
 if __name__ == "__main__":
