@@ -165,7 +165,11 @@ class ApiTests(unittest.TestCase):
         response = self.client.post(
             "/api/v1/analyze/video",
             files={"video": ("sample.avi", video_bytes, "video/x-msvideo")},
-            data={"sample_every_n_frames": "1", "max_frames": "4"},
+            data={
+                "sample_every_n_frames": "1",
+                "max_frames": "4",
+                "include_frame_results": "true",
+            },
         )
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -174,6 +178,7 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(body["frames_sampled"], 1)
         self.assertIn("frame_results", body)
         self.assertIn("events", body)
+        self.assertIn("alerts", body)
         self.assertIn("suspicious_event_count", body)
         self.assertIn("observations", body["frame_results"][0])
 
@@ -190,6 +195,7 @@ class ApiTests(unittest.TestCase):
                 "sample_every_n_frames": "1",
                 "max_frames": "2",
                 "include_landmarks": "false",
+                "include_frame_results": "true",
             },
         )
         self.assertEqual(response.status_code, 200)
@@ -215,6 +221,7 @@ class ApiTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["filename"], "sample.avi")
         self.assertIn("events", body)
+        self.assertIn("alerts", body)
         self.assertIn("key_frames", body)
         self.assertLessEqual(len(body["key_frames"]), 3)
         self.assertNotIn("frame_results", body)

@@ -15,11 +15,12 @@ class SuspicionScorer:
     GAZE_X_THRESHOLD = 0.35
     GAZE_Y_THRESHOLD = 0.35
     YAW_THRESHOLD = 15.0
-    PITCH_THRESHOLD = 12.0
+    PITCH_DOWN_THRESHOLD = 10.0
+    PITCH_UP_THRESHOLD = 16.0
     ROLL_THRESHOLD = 16.0
     BLINK_LOW = 5.0
     BLINK_HIGH = 30.0
-    SPEECH_ACTIVITY_THRESHOLD = 0.45
+    SPEECH_ACTIVITY_THRESHOLD = 0.62
 
     def __init__(self):
         self._history = deque(maxlen=self.WINDOW_SIZE)
@@ -33,7 +34,8 @@ class SuspicionScorer:
             score += 0.20
         if abs(features.get("head_yaw", 0.0)) > self.YAW_THRESHOLD:
             score += 0.25
-        if abs(features.get("head_pitch", 0.0)) > self.PITCH_THRESHOLD:
+        head_pitch = features.get("head_pitch", 0.0)
+        if head_pitch > self.PITCH_DOWN_THRESHOLD or head_pitch < -self.PITCH_UP_THRESHOLD:
             score += 0.15
         if abs(features.get("head_roll", 0.0)) > self.ROLL_THRESHOLD:
             score += 0.10

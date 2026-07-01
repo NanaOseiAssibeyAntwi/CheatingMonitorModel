@@ -11,7 +11,9 @@ from cheating_detector.core.suspicion_scorer import SuspicionScorer
 
 @dataclass
 class AnalysisSession:
-    extractor: FeatureExtractor = field(default_factory=FeatureExtractor)
+    extractor: FeatureExtractor = field(
+        default_factory=lambda: FeatureExtractor(auto_calibrate=True, calibration_frames=40)
+    )
     scorer: SuspicionScorer = field(default_factory=SuspicionScorer)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)

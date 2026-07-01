@@ -19,12 +19,13 @@ class AnalysisService:
     GAZE_SIDE_THRESHOLD = 0.32
     GAZE_VERTICAL_THRESHOLD = 0.32
     HEAD_YAW_THRESHOLD = 12.0
-    HEAD_PITCH_THRESHOLD = 10.0
+    HEAD_PITCH_DOWN_THRESHOLD = 10.0
+    HEAD_PITCH_UP_THRESHOLD = 16.0
     HEAD_ROLL_THRESHOLD = 14.0
     BLINK_LOW = 5.0
     BLINK_HIGH = 30.0
-    SPEECH_ACTIVITY_THRESHOLD = 0.45
-    MOUTH_OPEN_THRESHOLD = 0.20
+    SPEECH_ACTIVITY_THRESHOLD = 0.62
+    MOUTH_OPEN_THRESHOLD = 0.24
     DARK_FRAME_BRIGHTNESS = 35.0
     LOW_CONTRAST_THRESHOLD = 12.0
     TIMESTAMP_FPS_FALLBACK = 30.0
@@ -91,6 +92,11 @@ class AnalysisService:
         if ratio >= 1.35:
             return "medium"
         return "low"
+
+    @staticmethod
+    def _severity_rank(severity: str | None) -> int:
+        ranks = {"low": 1, "medium": 2, "high": 3}
+        return ranks.get((severity or "").lower(), 0)
 
     @staticmethod
     def _signal(
@@ -183,6 +189,7 @@ class AnalysisService:
         head_roll = float(features.get("head_roll", 0.0))
         blink_rate = float(features.get("blink_rate", 0.0))
         speech_activity = features.get("speech_activity")
+        is_speaking = bool(features.get("is_speaking", False))
         mouth_mar = features.get("mouth_mar")
 
         if abs(gaze_x) > cls.GAZE_SIDE_THRESHOLD:
@@ -224,16 +231,26 @@ class AnalysisService:
                 )
             )
 
-        if abs(head_pitch) > cls.HEAD_PITCH_THRESHOLD:
-            direction = "down" if head_pitch > 0 else "up"
+        if head_pitch > cls.HEAD_PITCH_DOWN_THRESHOLD:
             signals.append(
                 cls._signal(
-                    code=f"head_pitch_{direction}",
+                    code="head_pitch_down",
                     category="head_pose",
-                    severity=cls._severity(head_pitch, cls.HEAD_PITCH_THRESHOLD),
+                    severity=cls._severity(head_pitch, cls.HEAD_PITCH_DOWN_THRESHOLD),
                     value=round(head_pitch, 2),
-                    threshold=cls.HEAD_PITCH_THRESHOLD,
-                    message=f"Head tilted {direction}.",
+                    threshold=cls.HEAD_PITCH_DOWN_THRESHOLD,
+                    message="Head tilted down.",
+                )
+            )
+        elif head_pitch < -cls.HEAD_PITCH_UP_THRESHOLD:
+            signals.append(
+                cls._signal(
+                    code="head_pitch_up",
+                    category="head_pose",
+                    severity=cls._severity(head_pitch, cls.HEAD_PITCH_UP_THRESHOLD),
+                    value=round(head_pitch, 2),
+                    threshold=cls.HEAD_PITCH_UP_THRESHOLD,
+                    message="Head tilted up.",
                 )
             )
 
@@ -273,7 +290,11 @@ class AnalysisService:
                 )
             )
 
-        if speech_activity is not None and float(speech_activity) >= cls.SPEECH_ACTIVITY_THRESHOLD:
+        if (
+            speech_activity is not None
+            and is_speaking
+            and float(speech_activity) >= cls.SPEECH_ACTIVITY_THRESHOLD
+        ):
             speech_value = float(speech_activity)
             signals.append(
                 cls._signal(
@@ -286,7 +307,11 @@ class AnalysisService:
                 )
             )
 
-        if mouth_mar is not None and float(mouth_mar) >= cls.MOUTH_OPEN_THRESHOLD:
+        if (
+            mouth_mar is not None
+            and float(mouth_mar) >= (cls.MOUTH_OPEN_THRESHOLD + 0.06)
+            and not is_speaking
+        ):
             signals.append(
                 cls._signal(
                     code="mouth_open",
@@ -300,10 +325,25 @@ class AnalysisService:
 
         return signals
 
-    @staticmethod
-    def _frame_observations(signals: list[dict], label: str, detected: bool) -> list[str]:
+    @classmethod
+    def _top_signals(cls, signals: list[dict], limit: int = 2) -> list[dict]:
+        if limit < 1:
+            return []
+        ranked = sorted(
+            signals,
+            key=lambda signal: (
+                cls._severity_rank(signal.get("severity")),
+                signal.get("value") is not None,
+                abs(float(signal.get("value") or 0.0)),
+            ),
+            reverse=True,
+        )
+        return ranked[:limit]
+
+    @classmethod
+    def _frame_observations(cls, signals: list[dict], label: str, detected: bool) -> list[str]:
         if signals:
-            return [signal["message"] for signal in signals]
+            return [signal["message"] for signal in cls._top_signals(signals, limit=2)]
         if not detected:
             return ["No face detected in this sampled frame."]
         if label == "NORMAL":
@@ -326,15 +366,22 @@ class AnalysisService:
             timestamp = frame_index / timestamp_fps if timestamp_fps > 0 else previous_timestamp
         return round(max(timestamp, previous_timestamp), 2)
 
-    @staticmethod
-    def _event_reason(frame_result: dict) -> tuple[str, str | None]:
+    @classmethod
+    def _event_reason(cls, frame_result: dict) -> tuple[str, str | None, str]:
         signals = frame_result.get("signals") or []
         if signals:
-            return signals[0]["message"], signals[0]["code"]
+            top_signal = cls._top_signals(signals, limit=1)[0]
+            return (
+                top_signal["message"],
+                top_signal["code"],
+                top_signal.get("severity") or "medium",
+            )
         observations = frame_result.get("observations") or []
         if observations:
-            return observations[0], None
-        return "Suspicious activity detected.", None
+            fallback_severity = "high" if frame_result.get("label") == "SUSPICIOUS" else "medium"
+            return observations[0], None, fallback_severity
+        fallback_severity = "high" if frame_result.get("label") == "SUSPICIOUS" else "medium"
+        return "Suspicious activity detected.", None, fallback_severity
 
     def _build_events(self, frame_results: list[dict]) -> list[dict]:
         events = []
@@ -362,7 +409,7 @@ class AnalysisService:
                 flush()
                 continue
 
-            reason, signal_code = self._event_reason(frame)
+            reason, signal_code, severity = self._event_reason(frame)
             frame_start = float(frame.get("timestamp_seconds", 0.0))
             frame_window = float(frame.get("sample_window_seconds") or 0.0)
             frame_end = round(max(frame_start + frame_window, frame_start), 2)
@@ -400,6 +447,7 @@ class AnalysisService:
                 "start_frame_index": frame["frame_index"],
                 "end_frame_index": frame["frame_index"],
                 "label": frame_label,
+                "severity": severity,
                 "reason": reason,
                 "signal_code": signal_code,
                 "max_score": frame.get("score"),
@@ -408,6 +456,34 @@ class AnalysisService:
 
         flush()
         return events
+
+    def _build_alerts(self, events: list[dict], max_alerts: int = 5) -> list[dict]:
+        if max_alerts < 1:
+            return []
+        ranked_events = sorted(
+            events,
+            key=lambda event: (
+                self._severity_rank(event.get("severity")),
+                1 if event.get("label") == "SUSPICIOUS" else 0,
+                float(event.get("duration_seconds") or 0.0),
+                float(event.get("max_score") or 0.0),
+            ),
+            reverse=True,
+        )
+        alerts = []
+        for event in ranked_events[:max_alerts]:
+            alerts.append(
+                {
+                    "start_timestamp_seconds": event["start_timestamp_seconds"],
+                    "end_timestamp_seconds": event["end_timestamp_seconds"],
+                    "duration_seconds": event["duration_seconds"],
+                    "label": event["label"],
+                    "severity": event.get("severity") or "medium",
+                    "reason": event["reason"],
+                    "signal_code": event.get("signal_code"),
+                }
+            )
+        return alerts
 
     def reset_session(self, session_id: str) -> bool:
         return self.session_store.reset(session_id)
@@ -500,6 +576,7 @@ class AnalysisService:
         observations = self._frame_observations(
             signals=signals, label=label, detected=True
         )
+        compact_signals = self._top_signals(signals, limit=3)
 
         return {
             "detected": True,
@@ -510,7 +587,7 @@ class AnalysisService:
             "label": label,
             "label_color": list(colour),
             "observations": observations,
-            "signals": signals,
+            "signals": compact_signals,
         }
 
     def analyze_video_bytes(
@@ -524,6 +601,8 @@ class AnalysisService:
         max_frames: int = 30,
         include_landmarks: bool = False,
         inference_max_width: int = 640,
+        include_frame_results: bool = False,
+        max_alerts: int = 5,
     ) -> dict:
         self._validate_classifier_inputs(classifier_output, confidence)
         if sample_every_n_frames < 1:
@@ -532,6 +611,8 @@ class AnalysisService:
             raise ValueError("max_frames must be at least 1.")
         if inference_max_width < 160:
             raise ValueError("inference_max_width must be at least 160.")
+        if max_alerts < 1:
+            raise ValueError("max_alerts must be at least 1.")
 
         suffix = Path(filename).suffix or ".mp4"
         temp_path = None
@@ -558,6 +639,11 @@ class AnalysisService:
             )
 
             active_session_id, extractor, scorer = self._get_processors(session_id)
+            if not session_id:
+                extractor = FeatureExtractor(
+                    auto_calibrate=True,
+                    calibration_frames=min(max_frames, 20),
+                )
             renderer = FaceMeshRenderer(static_image_mode=False, max_num_faces=2)
             frame_results = []
             frames_processed = 0
@@ -640,7 +726,7 @@ class AnalysisService:
                             "label": label,
                             "label_color": list(colour),
                             "observations": observations,
-                            "signals": signals,
+                            "signals": self._top_signals(signals, limit=3),
                             "features": features,
                             "landmarks": normalized_landmarks,
                         }
@@ -677,6 +763,7 @@ class AnalysisService:
                 final_label = "NORMAL"
 
             events = self._build_events(frame_results)
+            alerts = self._build_alerts(events, max_alerts=max_alerts)
 
             if duration_seconds <= 0 and total_frames > 0:
                 duration_seconds = round(total_frames / timestamp_fps, 2)
@@ -687,6 +774,7 @@ class AnalysisService:
                     + float(last_frame.get("sample_window_seconds") or 0.0),
                     2,
                 )
+            output_frame_results = frame_results if include_frame_results else []
 
             return {
                 "session_id": active_session_id,
@@ -702,7 +790,8 @@ class AnalysisService:
                 "final_label": final_label,
                 "suspicious_event_count": len(events),
                 "events": events,
-                "frame_results": frame_results,
+                "alerts": alerts,
+                "frame_results": output_frame_results,
             }
         finally:
             if temp_path and os.path.exists(temp_path):
@@ -729,7 +818,7 @@ class AnalysisService:
                 "label": frame["label"],
                 "score": frame["score"],
                 "observations": frame["observations"],
-                "signals": frame.get("signals") or [],
+                "signals": AnalysisService._top_signals(frame.get("signals") or [], limit=2),
             }
             for frame in ranked_frames[:max_key_frames]
         ]
@@ -748,6 +837,7 @@ class AnalysisService:
             "final_label": analysis_result["final_label"],
             "suspicious_event_count": analysis_result["suspicious_event_count"],
             "events": analysis_result["events"],
+            "alerts": analysis_result.get("alerts", []),
             "key_frames": key_frames,
         }
 
@@ -782,6 +872,7 @@ class AnalysisService:
         observations = self._frame_observations(
             signals=signals, label=label, detected=True
         )
+        compact_signals = self._top_signals(signals, limit=3)
 
         return {
             "session_id": active_session_id,
@@ -791,7 +882,7 @@ class AnalysisService:
             "label_color": list(colour),
             "features": features,
             "observations": observations,
-            "signals": signals,
+            "signals": compact_signals,
         }
 
     def normalize_landmarks(self, landmarks) -> list[list[float]]:

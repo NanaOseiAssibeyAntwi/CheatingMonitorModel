@@ -79,6 +79,8 @@ Notes:
 - For `Analyze Video`, you must manually choose a video file in the Postman form-data body before sending
 - `Analyze Video` supports `include_landmarks=true|false` (default is `false`) so responses stay fast by default
 - `Analyze Video` supports `inference_max_width` (default `640`) so you can control speed/accuracy tradeoff
+- `Analyze Video` supports `include_frame_results=true|false` (default `false`) so you can keep payloads minimal
+- `Analyze Video` supports `max_alerts` (default `5`) to limit how many incident messages come back per request
 - If you deploy to Vercel later, just change `baseUrl` in the Postman environment to your deployed URL
 
 ## Main Endpoints
@@ -116,10 +118,12 @@ Analyze an uploaded video:
 curl -X POST http://127.0.0.1:8000/api/v1/analyze/video \
   -F "video=@sample.mp4" \
   -F "session_id=YOUR_SESSION_ID" \
-  -F "sample_every_n_frames=10" \
-  -F "max_frames=30" \
+  -F "sample_every_n_frames=3" \
+  -F "max_frames=20" \
   -F "include_landmarks=false" \
-  -F "inference_max_width=640"
+  -F "inference_max_width=640" \
+  -F "include_frame_results=false" \
+  -F "max_alerts=5"
 ```
 
 Analyze a video summary:
@@ -128,9 +132,10 @@ Analyze a video summary:
 curl -X POST http://127.0.0.1:8000/api/v1/analyze/video/summary \
   -F "video=@sample.mp4" \
   -F "session_id=YOUR_SESSION_ID" \
-  -F "sample_every_n_frames=10" \
-  -F "max_frames=30" \
+  -F "sample_every_n_frames=3" \
+  -F "max_frames=20" \
   -F "inference_max_width=640" \
+  -F "max_alerts=5" \
   -F "max_key_frames=5"
 ```
 
@@ -145,11 +150,13 @@ Video response highlights:
 - `events`: grouped suspicious intervals across the video
 - `events[].reason`: the main reason the interval was flagged
 - `events[].start_timestamp_seconds`, `events[].end_timestamp_seconds`, and `events[].duration_seconds`: when and for how long that interval happened
+- `alerts`: compact incident list (best for mobile/real-time feeds) with start/end/duration + reason
 - `events[].signal_code`: machine-readable primary reason code
 
 Video summary response highlights:
 
 - `events`: grouped suspicious intervals only
+- `alerts`: compact incident list only (few messages per chunk)
 - `key_frames`: the most important sampled frames ranked by score
 - no `frame_results` payload, so it is lighter for Postman and frontend consumption
 
@@ -192,6 +199,7 @@ If you already created a manual Render web service before this file existed, set
 ## Notes
 
 - `session_id` is optional but recommended when you send multiple frames from the same client, because blink rate and rolling suspicion score are temporal features.
+- For repeated short video chunks (for example every 2-5 seconds), always reuse the same `session_id` so calibration and temporal features remain stable and false positives drop.
 - Sessions are stored in-memory; restarting or re-scaling the service resets active sessions.
 - Dataset download endpoints are read-only. Writing persistent training data is better handled with external storage on Vercel because the function filesystem is ephemeral.
 - Render filesystem is also ephemeral unless you attach persistent disk/storage.

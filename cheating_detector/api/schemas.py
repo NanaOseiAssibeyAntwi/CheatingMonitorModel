@@ -110,10 +110,21 @@ class VideoEvent(BaseModel):
     start_frame_index: int
     end_frame_index: int
     label: str
+    severity: str | None = None
     reason: str
     signal_code: str | None = None
     max_score: int | None = None
     frame_count: int
+
+
+class VideoAlert(BaseModel):
+    start_timestamp_seconds: float
+    end_timestamp_seconds: float
+    duration_seconds: float
+    label: str
+    severity: str
+    reason: str
+    signal_code: str | None = None
 
 
 class VideoAnalysisResponse(BaseModel):
@@ -130,6 +141,7 @@ class VideoAnalysisResponse(BaseModel):
     final_label: str
     suspicious_event_count: int
     events: list[VideoEvent]
+    alerts: list[VideoAlert]
     frame_results: list[VideoFrameResult]
 
 
@@ -156,4 +168,5 @@ class VideoSummaryResponse(BaseModel):
     final_label: str
     suspicious_event_count: int
     events: list[VideoEvent]
+    alerts: list[VideoAlert]
     key_frames: list[VideoSummaryKeyFrame]

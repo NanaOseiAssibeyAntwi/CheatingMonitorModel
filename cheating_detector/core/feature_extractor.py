@@ -48,9 +48,11 @@ class FeatureExtractor:
     CALIBRATION_OUTLIER_YAW = 35.0
     CALIBRATION_OUTLIER_PITCH = 35.0
     CALIBRATION_OUTLIER_ROLL = 25.0
-    TALK_WINDOW = 20
-    MOUTH_OPEN_THRESHOLD = 0.17
-    SPEECH_ACTIVITY_THRESHOLD = 0.45
+    TALK_WINDOW = 24
+    MOUTH_OPEN_THRESHOLD = 0.24
+    SPEECH_ACTIVITY_THRESHOLD = 0.62
+    PITCH_NEUTRAL_RATIO = 0.36
+    PITCH_SCALE = 120.0
 
     def __init__(self, auto_calibrate=False, calibration_frames=45):
         self._blink_count = 0
@@ -69,6 +71,7 @@ class FeatureExtractor:
             "head_roll": 0.0,
         }
         self._mouth_mar_history = deque(maxlen=self.TALK_WINDOW)
+        self._mouth_movement_history = deque(maxlen=self.TALK_WINDOW)
         self._prev_mouth_mar = None
 
     @staticmethod
@@ -209,13 +212,13 @@ class FeatureExtractor:
         else:
             yaw = ((nose["x"] - ear_mid_x) / face_width) * 90.0
 
-        face_top = lm[self.NOSE_BRIDGE]["y"]
-        face_height = abs(chin["y"] - face_top)
-        if face_height == 0:
+        eye_mid_y = (left_eye["y"] + right_eye["y"]) / 2.0
+        lower_face_span = chin["y"] - eye_mid_y
+        if lower_face_span <= 0:
             pitch = 0.0
         else:
-            nose_rel = (nose["y"] - face_top) / face_height
-            pitch = (nose_rel - 0.45) * 90.0
+            nose_rel = (nose["y"] - eye_mid_y) / lower_face_span
+            pitch = (nose_rel - self.PITCH_NEUTRAL_RATIO) * self.PITCH_SCALE
 
         dx = right_eye["x"] - left_eye["x"]
         dy = right_eye["y"] - left_eye["y"]
@@ -242,22 +245,32 @@ class FeatureExtractor:
         self._prev_mouth_mar = mar
 
         self._mouth_mar_history.append(mar)
+        self._mouth_movement_history.append(mouth_movement)
         history = list(self._mouth_mar_history)
+        movement_history = list(self._mouth_movement_history)
         variability = (max(history) - min(history)) if len(history) > 1 else 0.0
-        open_ratio = (
-            sum(1 for value in history if value >= self.MOUTH_OPEN_THRESHOLD) / len(history)
-            if history
-            else 0.0
+        avg_movement = (
+            sum(movement_history) / len(movement_history) if movement_history else 0.0
+        )
+        movement_peaks = sum(
+            1 for value in movement_history if value >= 0.01
+        )
+        movement_peak_ratio = (
+            movement_peaks / len(movement_history) if movement_history else 0.0
         )
 
         speech_activity = self._clamp(
-            (mouth_movement * 8.0) + (variability * 5.0) + max(0.0, open_ratio - 0.25),
+            (variability * 9.0)
+            + (avg_movement * 20.0)
+            + (movement_peak_ratio * 0.5),
             0.0,
             1.0,
         )
         is_speaking = (
             speech_activity >= self.SPEECH_ACTIVITY_THRESHOLD
-            and mar >= (self.MOUTH_OPEN_THRESHOLD * 0.8)
+            and variability >= 0.03
+            and avg_movement >= 0.0045
+            and len(history) >= 8
         )
         return mar, mouth_movement, speech_activity, is_speaking
 
