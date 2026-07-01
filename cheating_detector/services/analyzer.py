@@ -346,6 +346,27 @@ class AnalysisService:
         return round(max(timestamp, previous_timestamp), 2)
 
     @staticmethod
+    def _build_sample_indices(
+        total_frames: int, sample_every_n_frames: int, max_frames: int
+    ) -> list[int]:
+        if total_frames <= 0:
+            return []
+
+        base_indices = list(range(0, total_frames, sample_every_n_frames))
+        if not base_indices:
+            return [0]
+        if len(base_indices) <= max_frames:
+            return base_indices
+        if max_frames == 1:
+            return [base_indices[0]]
+
+        last_position = len(base_indices) - 1
+        selected_positions = [
+            (i * last_position) // (max_frames - 1) for i in range(max_frames)
+        ]
+        return [base_indices[position] for position in selected_positions]
+
+    @staticmethod
     def _finalize_event(event: dict) -> dict:
         event["duration_seconds"] = round(
             max(
@@ -711,6 +732,25 @@ class AnalysisService:
             sample_window_seconds = round(
                 max(sample_every_n_frames / timestamp_fps, 1.0 / timestamp_fps), 2
             )
+            sample_indices = self._build_sample_indices(
+                total_frames=total_frames,
+                sample_every_n_frames=sample_every_n_frames,
+                max_frames=max_frames,
+            )
+            sample_windows_by_index: dict[int, float] = {}
+            if sample_indices:
+                for index, frame_index in enumerate(sample_indices):
+                    if index + 1 < len(sample_indices):
+                        next_frame_index = sample_indices[index + 1]
+                    else:
+                        next_frame_index = min(
+                            frame_index + sample_every_n_frames, total_frames
+                        )
+                    delta_frames = max(next_frame_index - frame_index, 1)
+                    sample_windows_by_index[frame_index] = round(
+                        max(delta_frames / timestamp_fps, 1.0 / timestamp_fps),
+                        2,
+                    )
 
             active_session_id, extractor, scorer = self._get_processors(session_id)
             renderer = FaceMeshRenderer(static_image_mode=False, max_num_faces=2)
@@ -718,9 +758,15 @@ class AnalysisService:
             frames_processed = 0
             frames_sampled = 0
             last_timestamp_seconds = 0.0
+            sample_index_cursor = 0
 
             try:
-                while frames_sampled < max_frames:
+                while True:
+                    if sample_indices and sample_index_cursor >= len(sample_indices):
+                        break
+                    if not sample_indices and frames_sampled >= max_frames:
+                        break
+
                     success, frame = capture.read()
                     if not success:
                         break
@@ -728,7 +774,22 @@ class AnalysisService:
                     frame_index = frames_processed
                     frames_processed += 1
 
-                    if frame_index % sample_every_n_frames != 0:
+                    if sample_indices:
+                        target_frame_index = sample_indices[sample_index_cursor]
+                        if frame_index < target_frame_index:
+                            continue
+                        if frame_index > target_frame_index:
+                            while (
+                                sample_index_cursor < len(sample_indices)
+                                and sample_indices[sample_index_cursor] < frame_index
+                            ):
+                                sample_index_cursor += 1
+                            if sample_index_cursor >= len(sample_indices):
+                                break
+                            if frame_index != sample_indices[sample_index_cursor]:
+                                continue
+                        sample_index_cursor += 1
+                    elif frame_index % sample_every_n_frames != 0:
                         continue
 
                     frames_sampled += 1
@@ -787,7 +848,9 @@ class AnalysisService:
                         {
                             "frame_index": frame_index,
                             "timestamp_seconds": timestamp_seconds,
-                            "sample_window_seconds": sample_window_seconds,
+                            "sample_window_seconds": sample_windows_by_index.get(
+                                frame_index, sample_window_seconds
+                            ),
                             "timestamp_source": timestamp_source,
                             "detected": detected,
                             "face_count": renderer.face_count,

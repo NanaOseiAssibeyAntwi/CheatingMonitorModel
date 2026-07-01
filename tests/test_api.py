@@ -202,6 +202,28 @@ class ApiTests(unittest.TestCase):
         body = response.json()
         self.assertIsNone(body["frame_results"][0]["landmarks"])
 
+    def test_video_sampling_spreads_across_full_clip(self):
+        try:
+            video_bytes = build_test_video_bytes()
+        except RuntimeError as exc:
+            self.skipTest(str(exc))
+
+        response = self.client.post(
+            "/api/v1/analyze/video",
+            files={"video": ("sample.avi", video_bytes, "video/x-msvideo")},
+            data={
+                "sample_every_n_frames": "1",
+                "max_frames": "2",
+                "include_frame_results": "true",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["frames_sampled"], 2)
+        self.assertEqual(body["frame_results"][0]["frame_index"], 0)
+        self.assertGreaterEqual(body["frame_results"][1]["frame_index"], 5)
+        self.assertGreaterEqual(body["frames_processed"], 6)
+
     def test_video_summary_endpoint_returns_key_frames(self):
         try:
             video_bytes = build_test_video_bytes()
