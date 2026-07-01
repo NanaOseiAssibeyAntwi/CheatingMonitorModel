@@ -713,11 +713,6 @@ class AnalysisService:
             )
 
             active_session_id, extractor, scorer = self._get_processors(session_id)
-            if not session_id:
-                extractor = FeatureExtractor(
-                    auto_calibrate=True,
-                    calibration_frames=min(max_frames, 20),
-                )
             renderer = FaceMeshRenderer(static_image_mode=False, max_num_faces=2)
             frame_results = []
             frames_processed = 0
