@@ -36,12 +36,27 @@ class FeatureExtractor:
 
     EAR_THRESHOLD = 0.20
     BLINK_COOLDOWN = 0.15
+    CALIBRATION_OUTLIER_GAZE = 0.75
+    CALIBRATION_OUTLIER_YAW = 35.0
+    CALIBRATION_OUTLIER_PITCH = 35.0
+    CALIBRATION_OUTLIER_ROLL = 25.0
 
-    def __init__(self):
+    def __init__(self, auto_calibrate=False, calibration_frames=45):
         self._blink_count = 0
         self._session_start = time.time()
         self._last_blink_time = 0.0
         self._eye_was_closed = False
+        self.auto_calibrate = bool(auto_calibrate)
+        self.calibration_frames = max(int(calibration_frames), 0)
+        self._calibration_frames_seen = 0
+        self._calibration_samples = 0
+        self._calibration_offsets = {
+            "gaze_x": 0.0,
+            "gaze_y": 0.0,
+            "head_yaw": 0.0,
+            "head_pitch": 0.0,
+            "head_roll": 0.0,
+        }
 
     @staticmethod
     def _dist(a, b):
@@ -54,6 +69,10 @@ class FeatureExtractor:
             item[0]: {"x": item[3], "y": item[4], "z": item[5]}
             for item in lm_list
         }
+
+    @staticmethod
+    def _clamp(value, low, high):
+        return max(low, min(high, value))
 
     def _compute_ear(self, lm, indices):
         """
@@ -85,36 +104,64 @@ class FeatureExtractor:
 
         return round(self._blink_count / elapsed_minutes, 1)
 
+    def _eye_gaze(self, lm, eye_indices, iris_index):
+        iris = lm[iris_index]
+        corner_a = lm[eye_indices[0]]
+        corner_b = lm[eye_indices[3]]
+
+        eye_left = min(corner_a["x"], corner_b["x"])
+        eye_right = max(corner_a["x"], corner_b["x"])
+        eye_width = eye_right - eye_left
+
+        if eye_width == 0:
+            gaze_x = 0.0
+        else:
+            raw_x = (iris["x"] - eye_left) / eye_width - 0.5
+            gaze_x = self._clamp(raw_x * 2.0, -1.0, 1.0)
+
+        upper_avg_y = (lm[eye_indices[1]]["y"] + lm[eye_indices[2]]["y"]) / 2.0
+        lower_avg_y = (lm[eye_indices[4]]["y"] + lm[eye_indices[5]]["y"]) / 2.0
+        eye_top = min(upper_avg_y, lower_avg_y)
+        eye_bottom = max(upper_avg_y, lower_avg_y)
+        eye_height = eye_bottom - eye_top
+
+        if eye_height == 0:
+            gaze_y = 0.0
+        else:
+            raw_y = (iris["y"] - eye_top) / eye_height - 0.5
+            gaze_y = self._clamp(raw_y * 2.0, -1.0, 1.0)
+
+        return gaze_x, gaze_y
+
     def compute_gaze(self, lm):
         """
         Returns (gaze_x, gaze_y) each in [-1, +1].
         Requires iris landmarks (refine_landmarks=True).
         """
-        if self.LEFT_IRIS not in lm or self.RIGHT_IRIS not in lm:
+        required = [
+            self.LEFT_EYE[0],
+            self.LEFT_EYE[1],
+            self.LEFT_EYE[2],
+            self.LEFT_EYE[3],
+            self.LEFT_EYE[4],
+            self.LEFT_EYE[5],
+            self.RIGHT_EYE[0],
+            self.RIGHT_EYE[1],
+            self.RIGHT_EYE[2],
+            self.RIGHT_EYE[3],
+            self.RIGHT_EYE[4],
+            self.RIGHT_EYE[5],
+            self.LEFT_IRIS,
+            self.RIGHT_IRIS,
+        ]
+        if not all(key in lm for key in required):
             return 0.0, 0.0
 
-        left_iris = lm[self.LEFT_IRIS]
-        left_eye_l = lm[self.LEFT_EYE[0]]
-        left_eye_r = lm[self.LEFT_EYE[3]]
-        eye_width = abs(left_eye_r["x"] - left_eye_l["x"])
-
-        if eye_width == 0:
-            gaze_x = 0.0
-        else:
-            raw_x = (left_iris["x"] - left_eye_l["x"]) / eye_width - 0.5
-            gaze_x = max(-1.0, min(1.0, raw_x * 2.0))
-
-        upper_avg_y = (lm[self.LEFT_EYE[1]]["y"] + lm[self.LEFT_EYE[2]]["y"]) / 2
-        lower_avg_y = (lm[self.LEFT_EYE[4]]["y"] + lm[self.LEFT_EYE[5]]["y"]) / 2
-        eye_height = abs(lower_avg_y - upper_avg_y)
-
-        if eye_height == 0:
-            gaze_y = 0.0
-        else:
-            raw_y = (left_iris["y"] - upper_avg_y) / eye_height - 0.5
-            gaze_y = max(-1.0, min(1.0, raw_y * 2.0))
-
-        return round(gaze_x, 4), round(gaze_y, 4)
+        left_x, left_y = self._eye_gaze(lm, self.LEFT_EYE, self.LEFT_IRIS)
+        right_x, right_y = self._eye_gaze(lm, self.RIGHT_EYE, self.RIGHT_IRIS)
+        gaze_x = (left_x + right_x) / 2.0
+        gaze_y = (left_y + right_y) / 2.0
+        return gaze_x, gaze_y
 
     def compute_head_pose(self, lm):
         """
@@ -161,7 +208,48 @@ class FeatureExtractor:
         dy = right_eye["y"] - left_eye["y"]
         roll = math.degrees(math.atan2(dy, dx))
 
-        return round(yaw, 2), round(pitch, 2), round(roll, 2)
+        return yaw, pitch, roll
+
+    @property
+    def is_calibrating(self):
+        return self.auto_calibrate and self._calibration_frames_seen < self.calibration_frames
+
+    @property
+    def calibration_frames_remaining(self):
+        if not self.auto_calibrate:
+            return 0
+        return max(self.calibration_frames - self._calibration_frames_seen, 0)
+
+    def _sample_is_calibration_safe(self, gaze_x, gaze_y, yaw, pitch, roll):
+        return (
+            abs(gaze_x) <= self.CALIBRATION_OUTLIER_GAZE
+            and abs(gaze_y) <= self.CALIBRATION_OUTLIER_GAZE
+            and abs(yaw) <= self.CALIBRATION_OUTLIER_YAW
+            and abs(pitch) <= self.CALIBRATION_OUTLIER_PITCH
+            and abs(roll) <= self.CALIBRATION_OUTLIER_ROLL
+        )
+
+    def _update_calibration_offsets(self, gaze_x, gaze_y, yaw, pitch, roll):
+        if not self.is_calibrating:
+            return
+
+        self._calibration_frames_seen += 1
+        if not self._sample_is_calibration_safe(gaze_x, gaze_y, yaw, pitch, roll):
+            return
+
+        self._calibration_samples += 1
+        sample_count = self._calibration_samples
+
+        updates = {
+            "gaze_x": gaze_x,
+            "gaze_y": gaze_y,
+            "head_yaw": yaw,
+            "head_pitch": pitch,
+            "head_roll": roll,
+        }
+        for key, value in updates.items():
+            previous = self._calibration_offsets[key]
+            self._calibration_offsets[key] = previous + (value - previous) / sample_count
 
     def extract(self, lm_list):
         """
@@ -183,12 +271,24 @@ class FeatureExtractor:
         gaze_x, gaze_y = self.compute_gaze(lm)
         yaw, pitch, roll = self.compute_head_pose(lm)
 
+        if self.auto_calibrate:
+            self._update_calibration_offsets(gaze_x, gaze_y, yaw, pitch, roll)
+            if self._calibration_samples > 0:
+                gaze_x -= self._calibration_offsets["gaze_x"]
+                gaze_y -= self._calibration_offsets["gaze_y"]
+                yaw -= self._calibration_offsets["head_yaw"]
+                pitch -= self._calibration_offsets["head_pitch"]
+                roll -= self._calibration_offsets["head_roll"]
+
+        gaze_x = self._clamp(gaze_x, -1.0, 1.0)
+        gaze_y = self._clamp(gaze_y, -1.0, 1.0)
+
         return {
-            "gaze_x": gaze_x,
-            "gaze_y": gaze_y,
+            "gaze_x": round(gaze_x, 4),
+            "gaze_y": round(gaze_y, 4),
             "blink_rate": blink_rate,
-            "head_yaw": yaw,
-            "head_pitch": pitch,
-            "head_roll": roll,
+            "head_yaw": round(yaw, 2),
+            "head_pitch": round(pitch, 2),
+            "head_roll": round(roll, 2),
             "ear": round(avg_ear, 4),
         }

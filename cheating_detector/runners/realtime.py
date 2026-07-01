@@ -16,7 +16,7 @@ def main(collect_mode=False):
         return
 
     renderer = FaceMeshRenderer(max_num_faces=2)
-    extractor = FeatureExtractor()
+    extractor = FeatureExtractor(auto_calibrate=True, calibration_frames=45)
     scorer = SuspicionScorer()
     collector = DataCollector() if collect_mode else None
 
@@ -42,7 +42,10 @@ def main(collect_mode=False):
             features = extractor.extract(landmarks)
 
         if features:
-            score, label, colour = scorer.update(features)
+            if extractor.is_calibrating:
+                score, label, colour = 0, "CALIBRATING", (0, 165, 255)
+            else:
+                score, label, colour = scorer.update(features)
 
         if renderer.face_count > 1:
             label = "SUSPICIOUS"
@@ -67,6 +70,7 @@ def main(collect_mode=False):
             renderer.face_count,
             collect_mode=collect_mode,
             current_label=collector._current_label if collector else 0,
+            calibration_frames_remaining=extractor.calibration_frames_remaining,
         )
 
         cv2.namedWindow("FYPGuard", cv2.WINDOW_NORMAL)

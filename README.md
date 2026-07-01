@@ -21,6 +21,21 @@ Open:
 - `/docs` for Swagger UI
 - `/health` for a health check
 
+## Local Webcam Run (Real-Time)
+
+```bash
+python faceDetector.py
+```
+
+This opens an OpenCV camera window named `FYPGuard` so you can test behavior live.
+Press `Q` to quit.
+
+Data-collection mode:
+
+```bash
+python faceDetector.py --collect
+```
+
 ## Run Tests
 
 ```bash

@@ -11,6 +11,7 @@ def draw_hud(
     face_count,
     collect_mode=False,
     current_label=0,
+    calibration_frames_remaining=0,
 ):
     """Draws all on-screen information."""
     h, w = image.shape[:2]
@@ -96,6 +97,17 @@ def draw_hud(
                 (200, 200, 200),
                 1,
             )
+
+    if calibration_frames_remaining > 0:
+        cv2.putText(
+            image,
+            f"Calibrating... look at screen ({calibration_frames_remaining} frames)",
+            (10, 85),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 200, 255),
+            2,
+        )
 
     if collect_mode:
         label_text = f"LABEL: {'0-NORMAL' if current_label == 0 else '1-SUSPICIOUS'}"
