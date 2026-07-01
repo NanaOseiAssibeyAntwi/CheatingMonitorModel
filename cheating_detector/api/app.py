@@ -115,7 +115,8 @@ async def analyze_video(
     confidence: float = Form(default=1.0),
     sample_every_n_frames: int = Form(default=10),
     max_frames: int = Form(default=30),
-    include_landmarks: bool = Form(default=True),
+    include_landmarks: bool = Form(default=False),
+    inference_max_width: int = Form(default=640),
 ):
     try:
         return service.analyze_video_bytes(
@@ -127,6 +128,7 @@ async def analyze_video(
             sample_every_n_frames=sample_every_n_frames,
             max_frames=max_frames,
             include_landmarks=include_landmarks,
+            inference_max_width=inference_max_width,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -140,6 +142,7 @@ async def analyze_video_summary(
     confidence: float = Form(default=1.0),
     sample_every_n_frames: int = Form(default=10),
     max_frames: int = Form(default=30),
+    inference_max_width: int = Form(default=640),
     max_key_frames: int = Form(default=5),
 ):
     try:
@@ -152,6 +155,7 @@ async def analyze_video_summary(
             sample_every_n_frames=sample_every_n_frames,
             max_frames=max_frames,
             include_landmarks=False,
+            inference_max_width=inference_max_width,
         )
         return service.summarize_video_analysis(
             analysis_result=analysis,

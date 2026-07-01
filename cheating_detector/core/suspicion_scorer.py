@@ -13,11 +13,13 @@ class SuspicionScorer:
     WINDOW_SIZE = 30
 
     GAZE_X_THRESHOLD = 0.35
-    GAZE_Y_THRESHOLD = 0.40
-    YAW_THRESHOLD = 20.0
-    PITCH_THRESHOLD = 25.0
+    GAZE_Y_THRESHOLD = 0.35
+    YAW_THRESHOLD = 15.0
+    PITCH_THRESHOLD = 12.0
+    ROLL_THRESHOLD = 16.0
     BLINK_LOW = 5.0
     BLINK_HIGH = 30.0
+    SPEECH_ACTIVITY_THRESHOLD = 0.45
 
     def __init__(self):
         self._history = deque(maxlen=self.WINDOW_SIZE)
@@ -25,16 +27,21 @@ class SuspicionScorer:
     def _rule_based_score(self, features):
         """Returns a raw [0, 1] suspicion value for this single frame."""
         score = 0.0
-        if abs(features["gaze_x"]) > self.GAZE_X_THRESHOLD:
+        if abs(features.get("gaze_x", 0.0)) > self.GAZE_X_THRESHOLD:
             score += 0.30
-        if abs(features["gaze_y"]) > self.GAZE_Y_THRESHOLD:
+        if abs(features.get("gaze_y", 0.0)) > self.GAZE_Y_THRESHOLD:
             score += 0.20
-        if abs(features["head_yaw"]) > self.YAW_THRESHOLD:
+        if abs(features.get("head_yaw", 0.0)) > self.YAW_THRESHOLD:
             score += 0.25
-        if abs(features["head_pitch"]) > self.PITCH_THRESHOLD:
+        if abs(features.get("head_pitch", 0.0)) > self.PITCH_THRESHOLD:
             score += 0.15
-        blink_rate = features["blink_rate"]
-        if blink_rate < self.BLINK_LOW or blink_rate > self.BLINK_HIGH:
+        if abs(features.get("head_roll", 0.0)) > self.ROLL_THRESHOLD:
+            score += 0.10
+        speech_activity = features.get("speech_activity")
+        if speech_activity is not None and speech_activity > self.SPEECH_ACTIVITY_THRESHOLD:
+            score += 0.10
+        blink_rate = features.get("blink_rate", 0.0)
+        if blink_rate > 0 and (blink_rate < self.BLINK_LOW or blink_rate > self.BLINK_HIGH):
             score += 0.10
         return min(score, 1.0)
 

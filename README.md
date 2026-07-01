@@ -77,7 +77,8 @@ Notes:
 - `List Datasets` automatically stores the first CSV filename in `datasetFilename`
 - For `Analyze Image`, you must manually choose a real image file in the Postman form-data body before sending
 - For `Analyze Video`, you must manually choose a video file in the Postman form-data body before sending
-- `Analyze Video` supports `include_landmarks=true|false` so you can choose between a full landmark payload and a lighter response
+- `Analyze Video` supports `include_landmarks=true|false` (default is `false`) so responses stay fast by default
+- `Analyze Video` supports `inference_max_width` (default `640`) so you can control speed/accuracy tradeoff
 - If you deploy to Vercel later, just change `baseUrl` in the Postman environment to your deployed URL
 
 ## Main Endpoints
@@ -117,7 +118,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/analyze/video \
   -F "session_id=YOUR_SESSION_ID" \
   -F "sample_every_n_frames=10" \
   -F "max_frames=30" \
-  -F "include_landmarks=true"
+  -F "include_landmarks=false" \
+  -F "inference_max_width=640"
 ```
 
 Analyze a video summary:
@@ -128,23 +130,33 @@ curl -X POST http://127.0.0.1:8000/api/v1/analyze/video/summary \
   -F "session_id=YOUR_SESSION_ID" \
   -F "sample_every_n_frames=10" \
   -F "max_frames=30" \
+  -F "inference_max_width=640" \
   -F "max_key_frames=5"
 ```
 
 Video response highlights:
 
 - `frame_results`: one entry per sampled frame
-- `frame_results[].observations`: human-readable notes like "Looking sideways toward the left."
+- `frame_results[].observations`: human-readable notes tied to the specific signals detected in each frame
+- `frame_results[].signals`: machine-readable detections (head pose, gaze, speaking, no-face, low-light, etc.) for frontend rendering/logging
+- `frame_results[].sample_window_seconds`: estimated duration represented by that sampled frame
+- `frame_results[].timestamp_source`: `video_fps` or `estimated_30fps` when source FPS metadata is missing
 - `frame_results[].landmarks`: the detected landmark points for that sampled frame when `include_landmarks=true`
 - `events`: grouped suspicious intervals across the video
 - `events[].reason`: the main reason the interval was flagged
-- `events[].start_timestamp_seconds` and `events[].end_timestamp_seconds`: where that interval happened in the video
+- `events[].start_timestamp_seconds`, `events[].end_timestamp_seconds`, and `events[].duration_seconds`: when and for how long that interval happened
+- `events[].signal_code`: machine-readable primary reason code
 
 Video summary response highlights:
 
 - `events`: grouped suspicious intervals only
 - `key_frames`: the most important sampled frames ranked by score
 - no `frame_results` payload, so it is lighter for Postman and frontend consumption
+
+Image and landmark response highlights:
+
+- `observations`: human-readable notes generated from the detected signals
+- `signals`: machine-readable detections that can be rendered directly in your mobile UI
 
 Score already-extracted features:
 

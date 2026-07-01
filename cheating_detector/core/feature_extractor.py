@@ -1,10 +1,11 @@
 import math
 import time
+from collections import deque
 
 
 class FeatureExtractor:
     """
-    Computes all six FYPGuard features from a MediaPipe landmark list.
+    Computes core FYPGuard features from a MediaPipe landmark list.
 
     Landmark index references (MediaPipe 468-point face mesh + iris):
       Left eye  : 33(left corner), 133(right corner),
@@ -20,6 +21,9 @@ class FeatureExtractor:
       Nose bridge top: 6
       Left eye outer corner (for roll): 33
       Right eye outer corner (for roll): 263
+      Upper lip center: 13
+      Lower lip center: 14
+      Mouth corners: 78 (left), 308 (right)
     """
 
     LEFT_EYE = [33, 160, 158, 133, 153, 144]
@@ -33,6 +37,10 @@ class FeatureExtractor:
     LEFT_EAR = 234
     RIGHT_EAR = 454
     NOSE_BRIDGE = 6
+    UPPER_LIP = 13
+    LOWER_LIP = 14
+    MOUTH_LEFT = 78
+    MOUTH_RIGHT = 308
 
     EAR_THRESHOLD = 0.20
     BLINK_COOLDOWN = 0.15
@@ -40,6 +48,9 @@ class FeatureExtractor:
     CALIBRATION_OUTLIER_YAW = 35.0
     CALIBRATION_OUTLIER_PITCH = 35.0
     CALIBRATION_OUTLIER_ROLL = 25.0
+    TALK_WINDOW = 20
+    MOUTH_OPEN_THRESHOLD = 0.17
+    SPEECH_ACTIVITY_THRESHOLD = 0.45
 
     def __init__(self, auto_calibrate=False, calibration_frames=45):
         self._blink_count = 0
@@ -57,6 +68,8 @@ class FeatureExtractor:
             "head_pitch": 0.0,
             "head_roll": 0.0,
         }
+        self._mouth_mar_history = deque(maxlen=self.TALK_WINDOW)
+        self._prev_mouth_mar = None
 
     @staticmethod
     def _dist(a, b):
@@ -210,6 +223,44 @@ class FeatureExtractor:
 
         return yaw, pitch, roll
 
+    def compute_mouth_activity(self, lm):
+        required = [self.UPPER_LIP, self.LOWER_LIP, self.MOUTH_LEFT, self.MOUTH_RIGHT]
+        if not all(key in lm for key in required):
+            return 0.0, 0.0, 0.0, False
+
+        mouth_width = self._dist(lm[self.MOUTH_LEFT], lm[self.MOUTH_RIGHT])
+        if mouth_width == 0:
+            mar = 0.0
+        else:
+            mouth_height = self._dist(lm[self.UPPER_LIP], lm[self.LOWER_LIP])
+            mar = mouth_height / mouth_width
+
+        if self._prev_mouth_mar is None:
+            mouth_movement = 0.0
+        else:
+            mouth_movement = abs(mar - self._prev_mouth_mar)
+        self._prev_mouth_mar = mar
+
+        self._mouth_mar_history.append(mar)
+        history = list(self._mouth_mar_history)
+        variability = (max(history) - min(history)) if len(history) > 1 else 0.0
+        open_ratio = (
+            sum(1 for value in history if value >= self.MOUTH_OPEN_THRESHOLD) / len(history)
+            if history
+            else 0.0
+        )
+
+        speech_activity = self._clamp(
+            (mouth_movement * 8.0) + (variability * 5.0) + max(0.0, open_ratio - 0.25),
+            0.0,
+            1.0,
+        )
+        is_speaking = (
+            speech_activity >= self.SPEECH_ACTIVITY_THRESHOLD
+            and mar >= (self.MOUTH_OPEN_THRESHOLD * 0.8)
+        )
+        return mar, mouth_movement, speech_activity, is_speaking
+
     @property
     def is_calibrating(self):
         return self.auto_calibrate and self._calibration_frames_seen < self.calibration_frames
@@ -270,6 +321,7 @@ class FeatureExtractor:
         blink_rate = self.update_blink(avg_ear)
         gaze_x, gaze_y = self.compute_gaze(lm)
         yaw, pitch, roll = self.compute_head_pose(lm)
+        mouth_mar, mouth_movement, speech_activity, is_speaking = self.compute_mouth_activity(lm)
 
         if self.auto_calibrate:
             self._update_calibration_offsets(gaze_x, gaze_y, yaw, pitch, roll)
@@ -291,4 +343,8 @@ class FeatureExtractor:
             "head_pitch": round(pitch, 2),
             "head_roll": round(roll, 2),
             "ear": round(avg_ear, 4),
+            "mouth_mar": round(mouth_mar, 4),
+            "mouth_movement": round(mouth_movement, 4),
+            "speech_activity": round(speech_activity, 4),
+            "is_speaking": is_speaking,
         }

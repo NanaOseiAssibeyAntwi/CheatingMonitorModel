@@ -20,6 +20,10 @@ class FeaturePayload(BaseModel):
     head_pitch: float
     head_roll: float
     ear: float | None = None
+    mouth_mar: float | None = None
+    mouth_movement: float | None = None
+    speech_activity: float | None = None
+    is_speaking: bool | None = None
 
 
 class AnalysisRequestBase(BaseModel):
@@ -59,6 +63,8 @@ class AnalysisResponse(BaseModel):
     score: int | None = None
     label: str
     label_color: list[int]
+    observations: list[str] = Field(default_factory=list)
+    signals: list[DetectionSignal] = Field(default_factory=list)
 
 
 class ScoreResponse(BaseModel):
@@ -68,17 +74,31 @@ class ScoreResponse(BaseModel):
     label: str
     label_color: list[int]
     features: FeaturePayload
+    observations: list[str] = Field(default_factory=list)
+    signals: list[DetectionSignal] = Field(default_factory=list)
+
+
+class DetectionSignal(BaseModel):
+    code: str
+    category: str
+    severity: str
+    value: float | None = None
+    threshold: float | None = None
+    message: str
 
 
 class VideoFrameResult(BaseModel):
     frame_index: int
     timestamp_seconds: float
+    sample_window_seconds: float | None = None
+    timestamp_source: str | None = None
     detected: bool
     face_count: int
     score: int | None = None
     label: str
     label_color: list[int]
     observations: list[str]
+    signals: list[DetectionSignal] = Field(default_factory=list)
     features: FeaturePayload | None = None
     landmarks: list[LandmarkPoint] | None = None
 
@@ -86,10 +106,12 @@ class VideoFrameResult(BaseModel):
 class VideoEvent(BaseModel):
     start_timestamp_seconds: float
     end_timestamp_seconds: float
+    duration_seconds: float
     start_frame_index: int
     end_frame_index: int
     label: str
     reason: str
+    signal_code: str | None = None
     max_score: int | None = None
     frame_count: int
 
@@ -100,6 +122,7 @@ class VideoAnalysisResponse(BaseModel):
     frames_processed: int
     frames_sampled: int
     fps: float
+    timestamp_source: str
     duration_seconds: float
     detections: int
     max_score: int
@@ -116,6 +139,7 @@ class VideoSummaryKeyFrame(BaseModel):
     label: str
     score: int | None = None
     observations: list[str]
+    signals: list[DetectionSignal] = Field(default_factory=list)
 
 
 class VideoSummaryResponse(BaseModel):
@@ -124,6 +148,7 @@ class VideoSummaryResponse(BaseModel):
     frames_processed: int
     frames_sampled: int
     fps: float
+    timestamp_source: str
     duration_seconds: float
     detections: int
     max_score: int
