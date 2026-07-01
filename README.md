@@ -80,7 +80,7 @@ Notes:
 - `Analyze Video` supports `include_landmarks=true|false` (default is `false`) so responses stay fast by default
 - `Analyze Video` supports `inference_max_width` (default `640`) so you can control speed/accuracy tradeoff
 - `Analyze Video` supports `include_frame_results=true|false` (default `false`) so you can keep payloads minimal
-- `Analyze Video` supports `max_alerts` (default `5`) to limit how many incident messages come back per request
+- `Analyze Video` supports `max_alerts` (default `3`) to limit how many incident messages come back per request
 - If you deploy to Vercel later, just change `baseUrl` in the Postman environment to your deployed URL
 
 ## Main Endpoints
@@ -123,7 +123,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/analyze/video \
   -F "include_landmarks=false" \
   -F "inference_max_width=640" \
   -F "include_frame_results=false" \
-  -F "max_alerts=5"
+  -F "max_alerts=3"
 ```
 
 Analyze a video summary:
@@ -135,7 +135,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/analyze/video/summary \
   -F "sample_every_n_frames=3" \
   -F "max_frames=20" \
   -F "inference_max_width=640" \
-  -F "max_alerts=5" \
+  -F "max_alerts=3" \
   -F "max_key_frames=5"
 ```
 
@@ -150,7 +150,7 @@ Video response highlights:
 - `events`: grouped suspicious intervals across the video
 - `events[].reason`: the main reason the interval was flagged
 - `events[].start_timestamp_seconds`, `events[].end_timestamp_seconds`, and `events[].duration_seconds`: when and for how long that interval happened
-- `alerts`: compact incident list (best for mobile/real-time feeds) with start/end/duration + reason
+- `alerts`: compact incident list (best for mobile/real-time feeds) with start/end/duration + reason (typically 1-3 alerts depending on activity in the chunk)
 - `events[].signal_code`: machine-readable primary reason code
 
 Video summary response highlights:

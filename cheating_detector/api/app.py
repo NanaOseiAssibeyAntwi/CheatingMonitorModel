@@ -118,7 +118,7 @@ async def analyze_video(
     include_landmarks: bool = Form(default=False),
     inference_max_width: int = Form(default=640),
     include_frame_results: bool = Form(default=False),
-    max_alerts: int = Form(default=5),
+    max_alerts: int = Form(default=3),
 ):
     try:
         return service.analyze_video_bytes(
@@ -147,7 +147,7 @@ async def analyze_video_summary(
     sample_every_n_frames: int = Form(default=10),
     max_frames: int = Form(default=30),
     inference_max_width: int = Form(default=640),
-    max_alerts: int = Form(default=5),
+    max_alerts: int = Form(default=3),
     max_key_frames: int = Form(default=5),
 ):
     try:

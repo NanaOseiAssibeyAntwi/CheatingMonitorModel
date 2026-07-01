@@ -366,100 +366,172 @@ class AnalysisService:
             timestamp = frame_index / timestamp_fps if timestamp_fps > 0 else previous_timestamp
         return round(max(timestamp, previous_timestamp), 2)
 
-    @classmethod
-    def _event_reason(cls, frame_result: dict) -> tuple[str, str | None, str]:
-        signals = frame_result.get("signals") or []
-        if signals:
-            top_signal = cls._top_signals(signals, limit=1)[0]
-            return (
-                top_signal["message"],
-                top_signal["code"],
-                top_signal.get("severity") or "medium",
-            )
-        observations = frame_result.get("observations") or []
-        if observations:
-            fallback_severity = "high" if frame_result.get("label") == "SUSPICIOUS" else "medium"
-            return observations[0], None, fallback_severity
-        fallback_severity = "high" if frame_result.get("label") == "SUSPICIOUS" else "medium"
-        return "Suspicious activity detected.", None, fallback_severity
+    @staticmethod
+    def _finalize_event(event: dict) -> dict:
+        event["duration_seconds"] = round(
+            max(
+                event["end_timestamp_seconds"] - event["start_timestamp_seconds"],
+                0.0,
+            ),
+            2,
+        )
+        return event
+
+    @staticmethod
+    def _fallback_event_from_frame(
+        frame: dict, frame_start: float, frame_end: float
+    ) -> dict | None:
+        label = frame.get("label")
+        if label not in {"CAUTION", "SUSPICIOUS"}:
+            return None
+        severity = "high" if label == "SUSPICIOUS" else "medium"
+        return {
+            "start_timestamp_seconds": frame_start,
+            "end_timestamp_seconds": frame_end,
+            "duration_seconds": 0.0,
+            "start_frame_index": frame["frame_index"],
+            "end_frame_index": frame["frame_index"],
+            "label": label,
+            "severity": severity,
+            "reason": "Suspicion score remained elevated.",
+            "signal_code": "risk_score",
+            "max_score": frame.get("score"),
+            "frame_count": 1,
+        }
 
     def _build_events(self, frame_results: list[dict]) -> list[dict]:
         events = []
-        current_event = None
-
-        def flush():
-            nonlocal current_event
-            if not current_event:
-                return
-            current_event["duration_seconds"] = round(
-                max(
-                    current_event["end_timestamp_seconds"]
-                    - current_event["start_timestamp_seconds"],
-                    0.0,
-                ),
-                2,
-            )
-            events.append(current_event)
-            current_event = None
+        active_events_by_code: dict[str, dict] = {}
 
         for frame in frame_results:
-            signals = frame.get("signals") or []
-            should_track = frame["label"] != "NORMAL" or bool(signals)
-            if not should_track:
-                flush()
-                continue
-
-            reason, signal_code, severity = self._event_reason(frame)
             frame_start = float(frame.get("timestamp_seconds", 0.0))
             frame_window = float(frame.get("sample_window_seconds") or 0.0)
             frame_end = round(max(frame_start + frame_window, frame_start), 2)
-            frame_label = frame["label"] if frame["label"] != "NORMAL" else "CAUTION"
+            frame_score = frame.get("score")
 
-            can_extend = (
-                current_event
-                and current_event["label"] == frame_label
-                and current_event["signal_code"] == signal_code
-                and frame_start
-                <= current_event["end_timestamp_seconds"] + max(frame_window, 0.05)
-            )
+            frame_signals = self._top_signals(frame.get("signals") or [], limit=3)
+            seen_codes = set()
 
-            if can_extend:
-                current_event["end_timestamp_seconds"] = max(
-                    current_event["end_timestamp_seconds"], frame_end
+            for signal in frame_signals:
+                signal_code = signal.get("code") or "unknown_signal"
+                seen_codes.add(signal_code)
+                severity = signal.get("severity") or "medium"
+                frame_label = (
+                    "SUSPICIOUS"
+                    if frame.get("label") == "SUSPICIOUS" or severity == "high"
+                    else "CAUTION"
                 )
-                current_event["end_frame_index"] = frame["frame_index"]
-                current_event["frame_count"] += 1
-                frame_score = frame.get("score")
-                if frame_score is not None:
-                    if current_event["max_score"] is None:
-                        current_event["max_score"] = frame_score
-                    else:
-                        current_event["max_score"] = max(
-                            current_event["max_score"], frame_score
+
+                current_event = active_events_by_code.get(signal_code)
+                can_extend = (
+                    current_event
+                    and frame_start
+                    <= current_event["end_timestamp_seconds"] + max(frame_window, 0.05)
+                )
+                if can_extend:
+                    current_event["end_timestamp_seconds"] = max(
+                        current_event["end_timestamp_seconds"], frame_end
+                    )
+                    current_event["end_frame_index"] = frame["frame_index"]
+                    current_event["frame_count"] += 1
+                    current_event["label"] = (
+                        "SUSPICIOUS"
+                        if current_event["label"] == "SUSPICIOUS"
+                        or frame_label == "SUSPICIOUS"
+                        else "CAUTION"
+                    )
+                    if frame_score is not None:
+                        if current_event["max_score"] is None:
+                            current_event["max_score"] = frame_score
+                        else:
+                            current_event["max_score"] = max(
+                                current_event["max_score"], frame_score
+                            )
+                    continue
+
+                if current_event:
+                    events.append(self._finalize_event(current_event))
+
+                active_events_by_code[signal_code] = {
+                    "start_timestamp_seconds": frame_start,
+                    "end_timestamp_seconds": frame_end,
+                    "duration_seconds": 0.0,
+                    "start_frame_index": frame["frame_index"],
+                    "end_frame_index": frame["frame_index"],
+                    "label": frame_label,
+                    "severity": severity,
+                    "reason": signal.get("message") or "Suspicious activity detected.",
+                    "signal_code": signal_code,
+                    "max_score": frame_score,
+                    "frame_count": 1,
+                }
+
+            fallback_event = self._fallback_event_from_frame(frame, frame_start, frame_end)
+            if fallback_event:
+                fallback_code = fallback_event["signal_code"]
+                if fallback_code not in seen_codes:
+                    seen_codes.add(fallback_code)
+                    current_event = active_events_by_code.get(fallback_code)
+                    can_extend = (
+                        current_event
+                        and frame_start
+                        <= current_event["end_timestamp_seconds"] + max(frame_window, 0.05)
+                    )
+                    if can_extend:
+                        current_event["end_timestamp_seconds"] = max(
+                            current_event["end_timestamp_seconds"], frame_end
                         )
-                continue
+                        current_event["end_frame_index"] = frame["frame_index"]
+                        current_event["frame_count"] += 1
+                        if frame_score is not None:
+                            if current_event["max_score"] is None:
+                                current_event["max_score"] = frame_score
+                            else:
+                                current_event["max_score"] = max(
+                                    current_event["max_score"], frame_score
+                                )
+                    else:
+                        if current_event:
+                            events.append(self._finalize_event(current_event))
+                        active_events_by_code[fallback_code] = fallback_event
 
-            flush()
-            current_event = {
-                "start_timestamp_seconds": frame_start,
-                "end_timestamp_seconds": frame_end,
-                "duration_seconds": 0.0,
-                "start_frame_index": frame["frame_index"],
-                "end_frame_index": frame["frame_index"],
-                "label": frame_label,
-                "severity": severity,
-                "reason": reason,
-                "signal_code": signal_code,
-                "max_score": frame.get("score"),
-                "frame_count": 1,
-            }
+            stale_codes = [
+                code for code in active_events_by_code.keys() if code not in seen_codes
+            ]
+            for stale_code in stale_codes:
+                events.append(self._finalize_event(active_events_by_code.pop(stale_code)))
 
-        flush()
+        for remaining_code in list(active_events_by_code.keys()):
+            events.append(self._finalize_event(active_events_by_code.pop(remaining_code)))
+
+        events.sort(
+            key=lambda event: (
+                float(event.get("start_timestamp_seconds") or 0.0),
+                event.get("signal_code") or "",
+            )
+        )
         return events
 
-    def _build_alerts(self, events: list[dict], max_alerts: int = 5) -> list[dict]:
-        if max_alerts < 1:
+    def _target_alert_count(self, events: list[dict], max_alerts: int) -> int:
+        if not events or max_alerts < 1:
+            return 0
+        distinct_signal_count = len(
+            {event.get("signal_code") or f"label:{event.get('label')}" for event in events}
+        )
+        total_events = len(events)
+
+        target = 1
+        if distinct_signal_count >= 2 or total_events >= 4:
+            target = 2
+        if distinct_signal_count >= 3 or total_events >= 7:
+            target = 3
+        return min(target, max_alerts)
+
+    def _build_alerts(self, events: list[dict], max_alerts: int = 3) -> list[dict]:
+        target_alerts = self._target_alert_count(events, max_alerts=max_alerts)
+        if target_alerts < 1:
             return []
+
         ranked_events = sorted(
             events,
             key=lambda event: (
@@ -470,8 +542,31 @@ class AnalysisService:
             ),
             reverse=True,
         )
+
+        selected_events = []
+        selected_event_ids = set()
+        seen_signal_codes = set()
+        for event in ranked_events:
+            signal_code = event.get("signal_code") or f"label:{event.get('label')}"
+            if signal_code in seen_signal_codes:
+                continue
+            selected_events.append(event)
+            selected_event_ids.add(id(event))
+            seen_signal_codes.add(signal_code)
+            if len(selected_events) >= target_alerts:
+                break
+
+        if len(selected_events) < target_alerts:
+            for event in ranked_events:
+                if id(event) in selected_event_ids:
+                    continue
+                selected_events.append(event)
+                selected_event_ids.add(id(event))
+                if len(selected_events) >= target_alerts:
+                    break
+
         alerts = []
-        for event in ranked_events[:max_alerts]:
+        for event in selected_events:
             alerts.append(
                 {
                     "start_timestamp_seconds": event["start_timestamp_seconds"],
@@ -602,7 +697,7 @@ class AnalysisService:
         include_landmarks: bool = False,
         inference_max_width: int = 640,
         include_frame_results: bool = False,
-        max_alerts: int = 5,
+        max_alerts: int = 3,
     ) -> dict:
         self._validate_classifier_inputs(classifier_output, confidence)
         if sample_every_n_frames < 1:
