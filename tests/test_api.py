@@ -302,13 +302,89 @@ class ApiTests(unittest.TestCase):
         event_codes = [event["signal_code"] for event in events]
         self.assertNotIn("no_face", event_codes)
 
+    def test_sustained_no_face_event_starts_as_caution(self):
+        service = AnalysisService()
+        frame_results = [
+            {
+                "frame_index": 0,
+                "timestamp_seconds": 0.0,
+                "sample_window_seconds": 1.1,
+                "label": "NO_FACE",
+                "score": None,
+                "signals": [
+                    {
+                        "code": "no_face",
+                        "severity": "high",
+                        "message": "No face detected in this sampled frame.",
+                    }
+                ],
+            },
+            {
+                "frame_index": 30,
+                "timestamp_seconds": 1.1,
+                "sample_window_seconds": 1.1,
+                "label": "NO_FACE",
+                "score": None,
+                "signals": [
+                    {
+                        "code": "no_face",
+                        "severity": "high",
+                        "message": "No face detected in this sampled frame.",
+                    }
+                ],
+            },
+        ]
+        events = service._build_events(frame_results)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["signal_code"], "no_face")
+        self.assertEqual(events[0]["label"], "CAUTION")
+        self.assertEqual(service._resolve_final_label(frame_results, events), "CAUTION")
+
+    def test_long_no_face_event_escalates_to_suspicious(self):
+        service = AnalysisService()
+        frame_results = [
+            {
+                "frame_index": 0,
+                "timestamp_seconds": 0.0,
+                "sample_window_seconds": 2.1,
+                "label": "NO_FACE",
+                "score": None,
+                "signals": [
+                    {
+                        "code": "no_face",
+                        "severity": "high",
+                        "message": "No face detected in this sampled frame.",
+                    }
+                ],
+            },
+            {
+                "frame_index": 60,
+                "timestamp_seconds": 2.1,
+                "sample_window_seconds": 2.1,
+                "label": "NO_FACE",
+                "score": None,
+                "signals": [
+                    {
+                        "code": "no_face",
+                        "severity": "high",
+                        "message": "No face detected in this sampled frame.",
+                    }
+                ],
+            },
+        ]
+        events = service._build_events(frame_results)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["signal_code"], "no_face")
+        self.assertEqual(events[0]["label"], "SUSPICIOUS")
+        self.assertEqual(service._resolve_final_label(frame_results, events), "SUSPICIOUS")
+
     def test_risk_score_not_created_when_specific_signal_exists(self):
         service = AnalysisService()
         frame_results = [
             {
                 "frame_index": 0,
                 "timestamp_seconds": 0.0,
-                "sample_window_seconds": 1.0,
+                "sample_window_seconds": 2.1,
                 "label": "CAUTION",
                 "score": 45,
                 "signals": [
@@ -322,7 +398,7 @@ class ApiTests(unittest.TestCase):
             },
             {
                 "frame_index": 20,
-                "timestamp_seconds": 1.0,
+                "timestamp_seconds": 2.1,
                 "sample_window_seconds": 1.0,
                 "label": "NORMAL",
                 "score": 0,
@@ -333,6 +409,111 @@ class ApiTests(unittest.TestCase):
         event_codes = [event["signal_code"] for event in events]
         self.assertIn("head_turn_left", event_codes)
         self.assertNotIn("risk_score", event_codes)
+
+    def test_transient_directional_signal_does_not_flag_video(self):
+        service = AnalysisService()
+        frame_results = [
+            {
+                "frame_index": 0,
+                "timestamp_seconds": 0.0,
+                "sample_window_seconds": 0.9,
+                "label": "CAUTION",
+                "score": 45,
+                "signals": [
+                    {
+                        "code": "gaze_side_left",
+                        "severity": "medium",
+                        "message": "Eyes shifted sideways toward the left.",
+                        "value": -0.52,
+                    }
+                ],
+            },
+            {
+                "frame_index": 27,
+                "timestamp_seconds": 0.9,
+                "sample_window_seconds": 0.9,
+                "label": "NORMAL",
+                "score": 0,
+                "signals": [],
+            },
+        ]
+        events = service._build_events(frame_results)
+        self.assertEqual(events, [])
+        self.assertEqual(service._resolve_final_label(frame_results, events), "NORMAL")
+
+    def test_sustained_directional_signal_becomes_caution(self):
+        service = AnalysisService()
+        frame_results = [
+            {
+                "frame_index": 0,
+                "timestamp_seconds": 0.0,
+                "sample_window_seconds": 2.1,
+                "label": "CAUTION",
+                "score": 45,
+                "signals": [
+                    {
+                        "code": "head_turn_left",
+                        "severity": "high",
+                        "message": "Head turned toward the left.",
+                        "value": -20.0,
+                    }
+                ],
+            },
+            {
+                "frame_index": 63,
+                "timestamp_seconds": 2.1,
+                "sample_window_seconds": 1.0,
+                "label": "NORMAL",
+                "score": 0,
+                "signals": [],
+            },
+        ]
+        events = service._build_events(frame_results)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["signal_code"], "head_turn_left")
+        self.assertEqual(events[0]["label"], "CAUTION")
+        self.assertEqual(service._resolve_final_label(frame_results, events), "CAUTION")
+
+    def test_normal_blink_signal_does_not_create_video_event(self):
+        service = AnalysisService()
+        frame_results = [
+            {
+                "frame_index": 0,
+                "timestamp_seconds": 0.0,
+                "sample_window_seconds": 0.8,
+                "label": "NORMAL",
+                "score": 10,
+                "signals": [
+                    {
+                        "code": "blink_low",
+                        "severity": "low",
+                        "message": "Blink rate is unusually low.",
+                        "value": 3.0,
+                    }
+                ],
+            },
+            {
+                "frame_index": 24,
+                "timestamp_seconds": 0.8,
+                "sample_window_seconds": 0.8,
+                "label": "NORMAL",
+                "score": 10,
+                "signals": [],
+            },
+        ]
+        events = service._build_events(frame_results)
+        self.assertEqual(events, [])
+        self.assertEqual(service._resolve_final_label(frame_results, events), "NORMAL")
+
+    def test_feature_extractor_supports_video_elapsed_time_for_blink_rate(self):
+        from cheating_detector.core.feature_extractor import FeatureExtractor
+
+        extractor = FeatureExtractor()
+        extractor._blink_count = 1
+
+        blink_rate = extractor.update_blink(ear=0.3, elapsed_seconds=10.0)
+
+        self.assertEqual(blink_rate, 6.0)
 
 
 if __name__ == "__main__":

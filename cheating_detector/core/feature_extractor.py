@@ -53,8 +53,11 @@ class FeatureExtractor:
     def __init__(self, auto_calibrate=False, calibration_frames=45):
         self._blink_count = 0
         self._session_start = time.time()
-        self._last_blink_time = 0.0
+        self._last_blink_time = -self.BLINK_COOLDOWN
         self._eye_was_closed = False
+        self._blink_time_mode = "wall"
+        self._manual_elapsed_offset_seconds = 0.0
+        self._last_manual_elapsed_seconds = None
         self.auto_calibrate = bool(auto_calibrate)
         self.calibration_frames = max(int(calibration_frames), 0)
         self._calibration_frames_seen = 0
@@ -97,13 +100,40 @@ class FeatureExtractor:
             return 0.0
         return (vertical1 + vertical2) / (2.0 * horizontal)
 
-    def update_blink(self, ear):
+    def _blink_elapsed_minutes(self, elapsed_seconds=None):
+        if elapsed_seconds is None:
+            return max((time.time() - self._session_start) / 60.0, 1 / 60)
+
+        relative_elapsed_seconds = max(float(elapsed_seconds), 0.0)
+        if (
+            self._last_manual_elapsed_seconds is not None
+            and relative_elapsed_seconds + 1e-6 < self._last_manual_elapsed_seconds
+        ):
+            self._manual_elapsed_offset_seconds += self._last_manual_elapsed_seconds
+        self._last_manual_elapsed_seconds = relative_elapsed_seconds
+
+        effective_elapsed_seconds = (
+            self._manual_elapsed_offset_seconds + relative_elapsed_seconds
+        )
+        return max(effective_elapsed_seconds / 60.0, 1 / 60)
+
+    def _blink_time_reference(self, elapsed_seconds=None):
+        blink_time_mode = "manual" if elapsed_seconds is not None else "wall"
+        if blink_time_mode != self._blink_time_mode:
+            self._last_blink_time = -self.BLINK_COOLDOWN
+            self._blink_time_mode = blink_time_mode
+
+        if elapsed_seconds is None:
+            return time.time()
+        return max(float(elapsed_seconds), 0.0)
+
+    def update_blink(self, ear, elapsed_seconds=None):
         """
         Call once per frame with the current average EAR.
         Returns current blinks-per-minute estimate.
         """
-        now = time.time()
-        elapsed_minutes = max((now - self._session_start) / 60.0, 1 / 60)
+        now = self._blink_time_reference(elapsed_seconds=elapsed_seconds)
+        elapsed_minutes = self._blink_elapsed_minutes(elapsed_seconds=elapsed_seconds)
 
         eye_closed = ear < self.EAR_THRESHOLD
         if eye_closed and not self._eye_was_closed:
@@ -281,10 +311,11 @@ class FeatureExtractor:
             previous = self._calibration_offsets[key]
             self._calibration_offsets[key] = previous + (value - previous) / sample_count
 
-    def extract(self, lm_list):
+    def extract(self, lm_list, elapsed_seconds=None):
         """
         Main entry point.
         lm_list : output of FaceMeshRenderer.find_landmarks()
+        elapsed_seconds : optional external timeline for offline video processing
         Returns dict with keys matching the CSV/model feature names.
         Returns None if no landmarks are available.
         """
@@ -297,7 +328,7 @@ class FeatureExtractor:
         right_ear = self._compute_ear(lm, self.RIGHT_EYE)
         avg_ear = (left_ear + right_ear) / 2.0
 
-        blink_rate = self.update_blink(avg_ear)
+        blink_rate = self.update_blink(avg_ear, elapsed_seconds=elapsed_seconds)
         gaze_x, gaze_y = self.compute_gaze(lm)
         yaw, pitch, roll = self.compute_head_pose(lm)
         mouth_mar, mouth_movement = self.compute_mouth_activity(lm)

@@ -28,10 +28,33 @@ class AnalysisService:
     DARK_FRAME_BRIGHTNESS = 35.0
     LOW_CONTRAST_THRESHOLD = 12.0
     TIMESTAMP_FPS_FALLBACK = 30.0
-    TRANSIENT_SIGNAL_RULES: dict[str, tuple[int, float]] = {
-        "no_face": (2, 1.2),
-        "multiple_faces": (2, 1.2),
+    NON_SCORE_EVENT_SIGNALS = {
+        "no_face",
+        "multiple_faces",
+        "camera_obstructed_or_dark",
+        "low_light",
     }
+    DIRECTIONAL_EVENT_PREFIXES = (
+        "gaze_side_",
+        "gaze_vertical_",
+        "head_turn_",
+        "head_pitch_",
+        "head_roll_",
+    )
+    TRANSIENT_SIGNAL_RULES: dict[str, tuple[int, float]] = {
+        "no_face": (2, 2.0),
+        "multiple_faces": (2, 2.0),
+        "camera_obstructed_or_dark": (2, 2.0),
+        "low_light": (2, 2.0),
+    }
+    EVENT_SUSPICIOUS_AFTER_SECONDS: dict[str, float] = {
+        "no_face": 4.0,
+        "multiple_faces": 2.0,
+        "camera_obstructed_or_dark": 4.0,
+        "low_light": 4.0,
+    }
+    DIRECTIONAL_TRANSIENT_RULE: tuple[int, float] = (2, 2.0)
+    DIRECTIONAL_SUSPICIOUS_AFTER_SECONDS = 4.0
 
     def __init__(self, session_store: SessionStore | None = None):
         self.session_store = session_store or SessionStore()
@@ -349,6 +372,17 @@ class AnalysisService:
             timestamp = frame_index / timestamp_fps if timestamp_fps > 0 else previous_timestamp
         return round(max(timestamp, previous_timestamp), 2)
 
+    @classmethod
+    def _event_signals_for_frame(cls, frame: dict) -> list[dict]:
+        frame_signals = cls._top_signals(frame.get("signals") or [], limit=3)
+        if frame.get("label") in {"CAUTION", "SUSPICIOUS"}:
+            return frame_signals
+        return [
+            signal
+            for signal in frame_signals
+            if (signal.get("code") or "") in cls.NON_SCORE_EVENT_SIGNALS
+        ]
+
     @staticmethod
     def _build_sample_indices(
         total_frames: int, sample_every_n_frames: int, max_frames: int
@@ -370,8 +404,43 @@ class AnalysisService:
         ]
         return [base_indices[position] for position in selected_positions]
 
-    @staticmethod
-    def _finalize_event(event: dict) -> dict:
+    @classmethod
+    def _signal_uses_directional_timing(cls, signal_code: str | None) -> bool:
+        if not signal_code:
+            return False
+        return signal_code.startswith(cls.DIRECTIONAL_EVENT_PREFIXES)
+
+    @classmethod
+    def _transient_rule_for_signal(cls, signal_code: str | None) -> tuple[int, float] | None:
+        if not signal_code:
+            return None
+        rule = cls.TRANSIENT_SIGNAL_RULES.get(signal_code)
+        if rule:
+            return rule
+        if cls._signal_uses_directional_timing(signal_code):
+            return cls.DIRECTIONAL_TRANSIENT_RULE
+        return None
+
+    @classmethod
+    def _suspicious_after_for_signal(cls, signal_code: str | None) -> float | None:
+        if not signal_code:
+            return None
+        suspicious_after = cls.EVENT_SUSPICIOUS_AFTER_SECONDS.get(signal_code)
+        if suspicious_after is not None:
+            return suspicious_after
+        if cls._signal_uses_directional_timing(signal_code):
+            return cls.DIRECTIONAL_SUSPICIOUS_AFTER_SECONDS
+        return None
+
+    @classmethod
+    def _frame_has_score_only_label(cls, frame: dict) -> bool:
+        label = frame.get("label")
+        if label not in {"CAUTION", "SUSPICIOUS"}:
+            return False
+        return not cls._event_signals_for_frame(frame)
+
+    @classmethod
+    def _finalize_event(cls, event: dict) -> dict:
         event["duration_seconds"] = round(
             max(
                 event["end_timestamp_seconds"] - event["start_timestamp_seconds"],
@@ -379,6 +448,16 @@ class AnalysisService:
             ),
             2,
         )
+        signal_code = event.get("signal_code")
+        suspicious_after = cls._suspicious_after_for_signal(signal_code)
+        if suspicious_after is not None:
+            if event["duration_seconds"] >= suspicious_after:
+                event["label"] = "SUSPICIOUS"
+                event["severity"] = "high"
+            else:
+                event["label"] = "CAUTION"
+                if cls._severity_rank(event.get("severity")) > cls._severity_rank("medium"):
+                    event["severity"] = "medium"
         return event
 
     @staticmethod
@@ -408,13 +487,40 @@ class AnalysisService:
         signal_code = event.get("signal_code")
         if not signal_code:
             return False
-        rule = cls.TRANSIENT_SIGNAL_RULES.get(signal_code)
+        rule = cls._transient_rule_for_signal(signal_code)
         if not rule:
             return False
         min_frames, min_duration = rule
         frame_count = int(event.get("frame_count") or 0)
         duration_seconds = float(event.get("duration_seconds") or 0.0)
         return frame_count < min_frames and duration_seconds < min_duration
+
+    @staticmethod
+    def _resolve_final_label(frame_results: list[dict], events: list[dict]) -> str:
+        if (
+            frame_results
+            and all(frame.get("label") == "NO_FACE" for frame in frame_results)
+            and not events
+        ):
+            return "NO_FACE"
+
+        if any(event.get("label") == "SUSPICIOUS" for event in events):
+            return "SUSPICIOUS"
+        if any(
+            AnalysisService._frame_has_score_only_label(frame)
+            and frame.get("label") == "SUSPICIOUS"
+            for frame in frame_results
+        ):
+            return "SUSPICIOUS"
+        if any(event.get("label") == "CAUTION" for event in events):
+            return "CAUTION"
+        if any(
+            AnalysisService._frame_has_score_only_label(frame)
+            and frame.get("label") == "CAUTION"
+            for frame in frame_results
+        ):
+            return "CAUTION"
+        return "NORMAL"
 
     def _build_events(self, frame_results: list[dict]) -> list[dict]:
         events = []
@@ -426,18 +532,21 @@ class AnalysisService:
             frame_end = round(max(frame_start + frame_window, frame_start), 2)
             frame_score = frame.get("score")
 
-            frame_signals = self._top_signals(frame.get("signals") or [], limit=3)
+            frame_signals = self._event_signals_for_frame(frame)
             seen_codes = set()
 
             for signal in frame_signals:
                 signal_code = signal.get("code") or "unknown_signal"
                 seen_codes.add(signal_code)
                 severity = signal.get("severity") or "medium"
-                frame_label = (
-                    "SUSPICIOUS"
-                    if frame.get("label") == "SUSPICIOUS" or severity == "high"
-                    else "CAUTION"
-                )
+                if frame.get("label") == "SUSPICIOUS":
+                    frame_label = "SUSPICIOUS"
+                elif signal_code in self.NON_SCORE_EVENT_SIGNALS:
+                    frame_label = "CAUTION"
+                elif severity == "high":
+                    frame_label = "SUSPICIOUS"
+                else:
+                    frame_label = "CAUTION"
 
                 current_event = active_events_by_code.get(signal_code)
                 can_extend = (
@@ -830,8 +939,19 @@ class AnalysisService:
                             landmarks = fallback_landmarks
                             frame_face_count = fallback_renderer.face_count
 
+                    timestamp_seconds = self._resolve_timestamp_seconds(
+                        capture=capture,
+                        frame_index=frame_index,
+                        timestamp_fps=timestamp_fps,
+                        previous_timestamp=last_timestamp_seconds,
+                    )
+                    last_timestamp_seconds = timestamp_seconds
+
                     if landmarks:
-                        features = extractor.extract(landmarks)
+                        features = extractor.extract(
+                            landmarks,
+                            elapsed_seconds=timestamp_seconds,
+                        )
                         score, label, colour = scorer.update(
                             features=features,
                             classifier_output=classifier_output,
@@ -853,14 +973,6 @@ class AnalysisService:
                         detected = False
                         normalized_landmarks = None
                         frame_face_count = 0
-
-                    timestamp_seconds = self._resolve_timestamp_seconds(
-                        capture=capture,
-                        frame_index=frame_index,
-                        timestamp_fps=timestamp_fps,
-                        previous_timestamp=last_timestamp_seconds,
-                    )
-                    last_timestamp_seconds = timestamp_seconds
 
                     signals = self._frame_signals(
                         features=features,
@@ -910,20 +1022,8 @@ class AnalysisService:
                 else 0.0
             )
 
-            has_suspicious = any(item["label"] == "SUSPICIOUS" for item in frame_results)
-            has_caution = any(item["label"] == "CAUTION" for item in frame_results)
-            has_signals = any(item.get("signals") for item in frame_results)
-            all_no_face = all(item["label"] == "NO_FACE" for item in frame_results)
-            if has_suspicious:
-                final_label = "SUSPICIOUS"
-            elif all_no_face:
-                final_label = "NO_FACE"
-            elif has_caution or has_signals:
-                final_label = "CAUTION"
-            else:
-                final_label = "NORMAL"
-
             events = self._build_events(frame_results)
+            final_label = self._resolve_final_label(frame_results=frame_results, events=events)
             alerts = self._build_alerts(events, max_alerts=max_alerts)
 
             if duration_seconds <= 0 and total_frames > 0:
